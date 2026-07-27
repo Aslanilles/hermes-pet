@@ -50,3 +50,7 @@ datasets/
 *.key
 credentials.*
 secrets.*
+
+# Hermes Pet
+sprites/*.png
+sprites/*.gif
