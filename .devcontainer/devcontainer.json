@@ -1,0 +1,39 @@
+{
+    "name": "Python Dev Environment",
+    "build": {
+        "dockerfile": "Dockerfile.dev"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "charliermarsh.ruff",
+                "ms-python.mypy-type-checker",
+                "ms-azuretools.vscode-docker",
+                "eamodio.gitlens",
+                "tamasfe.even-better-toml",
+                "ms-toolsai.jupyter",
+                "github.copilot",
+                "github.copilot-chat"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/workspace/.venv/bin/python",
+                "python.terminal.activateEnvironment": true,
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.organizeImports": "explicit"
+                },
+                "[python]": {
+                    "editor.defaultFormatter": "charliermarsh.ruff"
+                }
+            }
+        }
+    },
+    "forwardPorts": [8888],
+    "postCreateCommand": "uv sync",
+    "remoteUser": "devuser",
+    "mounts": [
+        "source=${localEnv:HOME}/.gitconfig,target=/home/devuser/.gitconfig,type=bind,readonly"
+    ]
+}
