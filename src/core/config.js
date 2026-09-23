@@ -74,7 +74,13 @@ function coerceBool(value, fallback) {
   return typeof value === 'boolean' ? value : fallback;
 }
 
+/**
+ * 读一个坐标：null / undefined / 空串 / 非数字 一律 -> null（「没有坐标」）。
+ * 注意 Number(null) === 0：老实现把「文件里没有 x」读成了「x = 0」，
+ * 于是首启窗口落在屏幕左上角（FIX-ROUND3 FIX-1 的根因），这里显式挡掉。
+ */
 function coerceCoord(value) {
+  if (value === null || value === undefined || value === '') return null;
   const n = Number(value);
   return Number.isFinite(n) ? Math.round(n) : null;
 }
@@ -186,6 +192,24 @@ function saveConfig(filePath, config) {
   return next;
 }
 
+/**
+ * 首启就把默认配置落盘（原子写）。文件缺失 / 空 / 损坏 -> 写一份含**全部默认值**的
+ * config.json；已经能解析的文件原样返回，绝不覆盖用户改过的值。
+ * 这样「设置持久化」这条功能可以打开文件直接验收，以后加字段也有迁移锚点
+ * （FIX-ROUND3 FIX-3）。写盘失败（只读目录等）也不能让程序起不来。
+ */
+function ensureConfig(filePath) {
+  const raw = readJsonSafe(filePath);
+  if (raw === null) {
+    try {
+      return saveConfig(filePath, DEFAULT_CONFIG);
+    } catch (err) {
+      return coerceConfig(null);
+    }
+  }
+  return coerceConfig(raw);
+}
+
 function patchConfig(filePath, patch) {
   const current = loadConfig(filePath);
   return saveConfig(filePath, Object.assign({}, current, isPlainObject(patch) ? patch : {}));
@@ -222,6 +246,7 @@ module.exports = {
   writeJsonAtomic,
   loadConfig,
   saveConfig,
+  ensureConfig,
   patchConfig,
   loadState,
   saveState,

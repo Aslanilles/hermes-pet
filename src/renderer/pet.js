@@ -11,6 +11,7 @@
 
 const api = window.hermes;
 
+const stage = document.getElementById('stage');
 const cat = document.getElementById('cat');
 const slot = document.getElementById('cat-slot');
 const bubble = document.getElementById('bubble');
@@ -74,6 +75,22 @@ function setPaused(value) {
   if (view.paused) {
     cat.style.backgroundPosition = api.spritePosition('idle', 0);
   }
+}
+
+/**
+ * 主进程为了保证「气泡完整可见」会把窗口整体收进屏幕，并算好两处平移量（FIX-ROUND3 FIX-2）：
+ *   catX/catY       —— 舞台整体反向平移，猫在屏幕上的位置一动不动；
+ *   bubbleX/bubbleY —— 气泡再单独挪回来，即使猫被拖到屏幕最边上气泡也不会被裁。
+ * 坐标全部由主进程按窗口真实矩形算 —— 渲染进程的 window.screenX 可能滞后于窗口位置，不能当基准。
+ */
+function applyWindowShift(shift) {
+  const payload = shift || {};
+  const catX = Number.isFinite(payload.catX) ? Math.round(payload.catX) : 0;
+  const catY = Number.isFinite(payload.catY) ? Math.round(payload.catY) : 0;
+  const bubbleX = Number.isFinite(payload.bubbleX) ? Math.round(payload.bubbleX) : 0;
+  const bubbleY = Number.isFinite(payload.bubbleY) ? Math.round(payload.bubbleY) : 0;
+  stage.style.transform = catX || catY ? 'translate(' + catX + 'px, ' + catY + 'px)' : 'none';
+  bubble.style.transform = bubbleX || bubbleY ? 'translate(' + bubbleX + 'px, ' + bubbleY + 'px)' : '';
 }
 
 function setPinned(value) {
@@ -527,6 +544,10 @@ api.onPause(function (info) {
 
 api.onBreakTick(function (info) {
   onBreakTick(info);
+});
+
+api.onWindowShift(function (shift) {
+  applyWindowShift(shift);
 });
 
 api.onPetCommand(function (info) {

@@ -105,3 +105,15 @@ test('drag 方向：向右 SE / 向左 SW，默认 SE（复用映射表，不自
   assert.equal(S.frameCount('SE'), 2);
   assert.equal(S.frameCount('SW'), 2);
 });
+
+test('talk / listen 复用映射：talk -> alert、listen -> idle（与 docs/M0-sprite-map.md 第 6 节一致）', () => {
+  assert.equal(S.STATE_SPRITES.talk, 'alert');
+  assert.equal(S.STATE_SPRITES.listen, 'idle');
+  assert.equal(S.spriteForState('talk'), 'alert');
+  assert.equal(S.spriteForState('listen'), 'idle');
+  // 取帧必须与映射表的 alert [-7,-3] / idle [-3,-3] 逐字一致
+  assert.equal(S.spritePosition('alert', 0), '-224px -96px');
+  assert.equal(S.spritePosition('idle', 0), '-96px -96px');
+  assert.equal(S.frameCount('alert'), 1);
+  assert.equal(S.frameCount('idle'), 1);
+});

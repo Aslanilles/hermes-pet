@@ -62,4 +62,5 @@ contextBridge.exposeInMainWorld('hermes', {
   onPause: function (cb) { return on('pet:pause', cb); },
   onBreakTick: function (cb) { return on('break:tick', cb); },
   onPetCommand: function (cb) { return on('pet:command', cb); },
+  onWindowShift: function (cb) { return on('pet:window-shift', cb); },
 });

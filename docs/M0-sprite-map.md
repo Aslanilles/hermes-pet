@@ -77,3 +77,32 @@ function setSprite(name, frame) {
 2. GIF 是网格贴图，**不要**用 `<img src="oneko.gif">` 当动画播放；用 `background-image` + `background-position` 或 canvas `drawImage(src, sx, sy, 32,32, ...)`
 3. 若你验证发现某个状态的实际画面与名字不符（例如 sleeping 看起来不像睡觉），**以实测为准并在 `docs/M0-sprite-map.md` 末尾追加「实测修正」小节**记录你的修正与依据（附你观察到的帧位置），不要静默改表
 4. 应用图标与托盘图标已生成好，直接用：`data/sprites/icon-256.png` / `icon-128.png` / `icon-64.png` / `icon-32.png` / `icon-night.png` / `tray.png`（深空蓝 #2D3748 + 星光金 #ECC94B，透明背景，与产品设计文档 4.2 色彩系统一致）
+
+
+---
+
+## 6. M0 状态补充映射（复用，不改动原始 17 组）
+
+> 本节由 FIX-ROUND3 FIX-4 追加。**权威实现见 `src/core/sprite-frames.js`（`STATE_SPRITES` / `spriteForDrag()`），文档与代码两者必须一致**——改任何一边都要同步另一边。
+> 上面 1-4 节（17 组索引表、取帧公式、状态映射、oneko idle 时序）**原文未改动**。
+
+`talk` / `listen` / `drag` 是 hermes-pet 新增的**行为态**，oneko 的 17 组里没有对应组，
+所以按「视觉语义就近借用」，**不自创索引**：
+
+| M0 状态 | 复用哪组帧 | 帧序列 | 叠的 CSS 动效 | 为什么借这一组 |
+|---|---|---|---|---|
+| `talk`（说话 / 打字机输出中） | `alert`（`[-7,-3]`） | 单帧 | `@keyframes talk-tilt`：`.cat-slot` 上下 2px，0.6s 循环 | alert 是竖耳、面向观众的姿态，读作「正在开口」；oneko 没有张嘴帧 |
+| `listen`（聆听 / 等用户输入） | `idle`（`[-3,-3]`） | 单帧 | `@keyframes listen-breathe`：`.cat-slot` 1 → 1.02 缩放，2.4s 循环 | idle 是坐定面向观众，加一点呼吸感表示「在听」 |
+| `drag`（拖拽中） | `SE` `[-5,-1]` / `SW` `[-5,-3]`，由 `spriteForDrag(direction)` 按拖动方向选（`W` → SW，其余含无位移 → SE） | 每组 2 帧交替 | 无额外 CSS（位移本身就是动效） | SE / SW 是侧向挣扎姿态，拖到哪边用哪边，最接近「被拖着走」 |
+
+实现位置与硬约束：
+
+- 取帧代码：`src/core/sprite-frames.js` 的 `STATE_SPRITES`（`talk` → `alert`、`listen` → `idle`、`drag` → `SE`）
+  与 `spriteForDrag(direction)`；取帧仍走同一套 `spritePosition(name, frame)`——
+  **负索引直接乘 32**，不要换成正列号（见第 2 节取帧公式）。
+- 动效代码：`src/renderer/pet.css` 的 `body[data-pet-state='talk'] .cat-slot` 与 `body[data-pet-state='listen'] .cat-slot`。
+  动画加在 `.cat-slot` 上而不是 `.cat` 上：`.cat` 的 `transform` 已被 `scale(var(--pet-scale))` 占用，
+  直接叠动画会把缩放冲掉。
+- 深夜模式（`body.deep-night`）动画周期翻倍：talk 0.6s → 1.2s、listen 2.4s → 4.8s，与 30fps → 15fps 的换帧节拍一致。
+- 一致性校验：`tests/sprite-frames.test.js` 断言 `talk`/`listen`/`drag(W|E)` 的取帧结果；
+  `tools/sprite_preview.html` 可以肉眼核对这三组的实际取帧。

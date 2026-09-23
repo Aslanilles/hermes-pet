@@ -120,3 +120,50 @@ test('readJsonSafe 对损坏内容返回 null，交给上层回落', () => {
   fs.writeFileSync(file, '###', 'utf8');
   assert.equal(C.readJsonSafe(file), null);
 });
+
+test('首启落盘：ensureConfig 写出一份含全部默认值的 config.json（原子写）', () => {
+  const file = tmpFile();
+  assert.equal(fs.existsSync(file), false, '前提：文件真的不存在');
+  const cfg = C.ensureConfig(file);
+  assert.deepEqual(cfg, C.DEFAULT_CONFIG);
+  assert.ok(fs.existsSync(file), '首启必须落盘');
+  assert.equal(fs.existsSync(file + '.tmp'), false, '原子写不留 .tmp');
+  const onDisk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.deepEqual(onDisk, C.DEFAULT_CONFIG, '文件里就是完整默认值清单，打开即可人工验收');
+  assert.deepEqual(Object.keys(onDisk).sort(), Object.keys(C.DEFAULT_CONFIG).sort());
+  assert.ok(fs.readFileSync(file, 'utf8').endsWith('\n'));
+});
+
+test('ensureConfig 不覆盖用户改过的值；文件损坏时自愈回默认值', () => {
+  const file = tmpFile();
+  C.saveConfig(file, { nickname: '嘉仪', size: 150, proactiveEnabled: false });
+  const kept = C.ensureConfig(file);
+  assert.equal(kept.nickname, '嘉仪');
+  assert.equal(kept.size, 150);
+  assert.equal(kept.proactiveEnabled, false);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).size, 150, '已存在的配置不许被默认值冲掉');
+
+  fs.writeFileSync(file, '{ broken', 'utf8');
+  assert.deepEqual(C.ensureConfig(file), C.DEFAULT_CONFIG);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')), C.DEFAULT_CONFIG);
+});
+
+test('state 坐标缺省必须是 null，不是 0（FIX-1 根因：Number(null) === 0）', () => {
+  const file = tmpFile('state.json');
+  fs.writeFileSync(file, JSON.stringify({ paused: false }), 'utf8');
+  assert.equal(C.loadState(file).x, null);
+  assert.equal(C.loadState(file).y, null);
+  assert.equal(C.coerceState({ x: undefined, y: '' }).x, null);
+  assert.equal(C.coerceState({ x: null, y: null }).y, null);
+  assert.equal(C.coerceState({ x: 'abc' }).x, null);
+  // 文件里真的写了 0 属于「值」而不是「缺省」，这一层原样保留；是否合法由 position 层判定
+  assert.equal(C.coerceState({ x: 0, y: 0 }).x, 0);
+  assert.equal(C.coerceState({ x: 1272.4, y: -3.6 }).x, 1272);
+});
+
+test('首启落盘后 loadState 与 ensureConfig 可以共存（目录不存在也能自建）', () => {
+  const dir = tmpDir();
+  const cfg = path.join(dir, 'nested', 'config.json');
+  assert.deepEqual(C.ensureConfig(cfg), C.DEFAULT_CONFIG);
+  assert.ok(fs.existsSync(cfg));
+});

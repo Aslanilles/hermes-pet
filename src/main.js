@@ -9,6 +9,7 @@ const path = require('path');
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen } = require('electron');
 
 const configStore = require('./core/config');
+const position = require('./core/position');
 const scheduler = require('./core/scheduler');
 const replies = require('./core/replies');
 const { createReplyService } = require('./adapters');
@@ -44,6 +45,11 @@ let state = null;
 let runtime = null;
 let replyService = null;
 let baseBounds = null; // 猫本体窗口的基准位置/尺寸（气泡展开时窗口临时变大，基准不变）
+// 气泡窗口被收进屏幕后，渲染进程要做的两处平移（全部由主进程算，渲染进程不猜屏幕坐标）：
+//   catX/catY    —— 舞台整体平移，让猫在屏幕上的位置一动不动
+//   bubbleX/bubbleY —— 气泡再单独平移，保证它一定完整落在 workArea 内
+let windowShift = { catX: 0, catY: 0, bubbleX: 0, bubbleY: 0 };
+let positionReady = false; // 窗口按基准摆好之前，禁止把位置写进 state.json
 let bubbleContent = null;
 let dragSession = null;
 let lastPetState = 'idle';
@@ -82,48 +88,53 @@ function sendToPet(channel, payload) {
   }
 }
 
+function workAreaFor(rect) {
+  return screen.getDisplayMatching(rect).workArea;
+}
+
+/** 允许窗口部分出屏，但至少留 MIN_VISIBLE 像素可见（拖拽 / 恢复位置用）。 */
 function clampToWorkArea(bounds) {
-  const display = screen.getDisplayMatching({
-    x: bounds.x,
-    y: bounds.y,
-    width: bounds.width,
-    height: bounds.height,
-  });
-  const wa = display.workArea;
-  const minX = wa.x - bounds.width + MIN_VISIBLE;
-  const maxX = wa.x + wa.width - MIN_VISIBLE;
-  const minY = wa.y - bounds.height + MIN_VISIBLE;
-  const maxY = wa.y + wa.height - MIN_VISIBLE;
-  return {
-    x: Math.round(Math.min(Math.max(bounds.x, minX), maxX)),
-    y: Math.round(Math.min(Math.max(bounds.y, minY), maxY)),
-    width: Math.round(bounds.width),
-    height: Math.round(bounds.height),
-  };
+  return position.clampToArea(bounds, workAreaFor(bounds), MIN_VISIBLE);
 }
 
+function primaryDisplayInfo() {
+  const display = screen.getPrimaryDisplay();
+  return { size: display.size, workArea: display.workArea, scaleFactor: display.scaleFactor };
+}
+
+/** 默认落点：主屏右下角，距两边各留 EDGE_MARGIN（F1「首次启动出现在右下角」）。 */
 function defaultBaseBounds() {
-  const size = petWindowSize();
-  const wa = screen.getPrimaryDisplay().workArea;
-  return clampToWorkArea({
-    x: wa.x + wa.width - size.width - EDGE_MARGIN,
-    y: wa.y + wa.height - size.height - EDGE_MARGIN,
-    width: size.width,
-    height: size.height,
+  return position.defaultBounds(screen.getPrimaryDisplay().workArea, petWindowSize(), {
+    edgeMargin: EDGE_MARGIN,
   });
 }
 
+/**
+ * 恢复落点：坐标缺失 / 非数字 / (0,0) 哨兵 一律回默认右下角，其余 clamp 回可见区。
+ * 判断全部下沉到 src/core/position.js（纯逻辑，有单测钉住）。
+ */
 function restoreBaseBounds() {
   const size = petWindowSize();
-  if (Number.isFinite(state.x) && Number.isFinite(state.y)) {
-    return clampToWorkArea({ x: state.x, y: state.y, width: size.width, height: size.height });
-  }
-  return defaultBaseBounds();
+  const workArea =
+    Number.isFinite(state.x) && Number.isFinite(state.y)
+      ? workAreaFor({ x: state.x, y: state.y, width: size.width, height: size.height })
+      : screen.getPrimaryDisplay().workArea;
+  return position.restoreBounds(state, workArea, size, {
+    edgeMargin: EDGE_MARGIN,
+    minVisible: MIN_VISIBLE,
+  });
 }
 
+/**
+ * 气泡展开时窗口临时变大：算完之后整体收进 workArea，并把「被平移了多少」记下来。
+ * 渲染进程反向平移内容 -> 气泡一定完整可见（FIX-ROUND3 FIX-2），猫在屏幕上不动。
+ */
 function windowBoundsForBubble(content) {
   const size = petWindowSize();
-  if (!content) return Object.assign({}, baseBounds);
+  if (!content) {
+    windowShift = { catX: 0, catY: 0, bubbleX: 0, bubbleY: 0 };
+    return Object.assign({}, baseBounds);
+  }
   const width = Math.max(
     size.width,
     Math.round(Math.min(BUBBLE_MAX_WIDTH + BUBBLE_PADDING_X, Math.max(160, content.width + BUBBLE_PADDING_X)))
@@ -132,23 +143,74 @@ function windowBoundsForBubble(content) {
   const height = size.height + bodyHeight + BUBBLE_GAP;
   const centerX = baseBounds.x + baseBounds.width / 2;
   const bottom = baseBounds.y + baseBounds.height;
-  return {
-    x: Math.round(centerX - width / 2),
-    y: Math.round(bottom - height),
-    width: width,
-    height: height,
+  const workArea = workAreaFor(baseBounds);
+  const fitted = position.fitInside(
+    {
+      x: Math.round(centerX - width / 2),
+      y: Math.round(bottom - height),
+      width: width,
+      height: height,
+    },
+    workArea
+  );
+  // 1) 舞台整体反向平移：窗口被推回来多少，内容就挪回去多少 -> 猫在屏幕上的位置一动不动
+  const catX = fitted.shift.x;
+  const catY = fitted.shift.y;
+  // 2) 气泡在窗口里的落点是固定的（pet.css：舞台内边距 PET_PADDING，flex 底部对齐 + 12px 顶部余量），
+  //    叠加舞台平移后若仍越出 workArea，就再单独把气泡挪进来 —— 只动气泡、不动猫。
+  const bubbleRect = {
+    x: fitted.rect.x + PET_PADDING + catX,
+    y: fitted.rect.y + PET_PADDING + catY,
+    width: Math.round(width - PET_PADDING * 2),
+    height: Math.round(bodyHeight),
   };
+  const bubbleInside = position.clampFullyInside(bubbleRect, workArea);
+  windowShift = {
+    catX: catX,
+    catY: catY,
+    bubbleX: bubbleInside.x - bubbleRect.x,
+    bubbleY: bubbleInside.y - bubbleRect.y,
+  };
+  return fitted.rect;
 }
 
 function syncWindowBounds() {
   if (!win || win.isDestroyed()) return;
   win.setBounds(windowBoundsForBubble(bubbleContent));
+  // 平移量全部由主进程算好（渲染进程的 window.screenX 可能滞后于窗口真实位置，不能拿来当基准）
+  sendToPet('pet:window-shift', windowShift);
 }
 
+/** 从窗口真实矩形反推「猫的基准矩形」；读不到合法坐标返回 null。 */
+function liveBaseBounds() {
+  if (!win || win.isDestroyed()) return null;
+  const actual = win.getBounds();
+  if (!actual || !Number.isFinite(actual.x) || !Number.isFinite(actual.y)) return null;
+  const size = petWindowSize();
+  const derived = {
+    x: actual.x + (actual.width - size.width) / 2,
+    y: actual.y + (actual.height - size.height),
+    width: size.width,
+    height: size.height,
+  };
+  // 再过一遍恢复路径：顺手 clamp，并且把 (0,0) 这种非法落点挡在盘外
+  return position.restoreBounds(derived, workAreaFor(derived), size, {
+    edgeMargin: EDGE_MARGIN,
+    minVisible: MIN_VISIBLE,
+  });
+}
+
+/**
+ * 位置落盘（唯一写入口）。两道防御（FIX-ROUND3 FIX-1）：
+ * 1) 窗口还没按基准摆好（ready-to-show 之前）绝不写 —— 否则会把占位坐标写进 state.json；
+ * 2) 写之前用 win.getBounds() 的真实值再 clamp 一次，读到非法坐标就放弃这次写入。
+ */
 function persistPosition() {
-  if (!baseBounds || !state) return;
-  state.x = Math.round(baseBounds.x);
-  state.y = Math.round(baseBounds.y);
+  if (!state || !statePath || !positionReady) return;
+  const live = liveBaseBounds();
+  if (!live) return;
+  state.x = live.x;
+  state.y = live.y;
   persistState();
 }
 
@@ -169,12 +231,13 @@ function persistRuntime() {
 function loadPersisted() {
   configPath = path.join(app.getPath('userData'), 'config.json');
   statePath = path.join(app.getPath('userData'), 'state.json');
-  config = configStore.loadConfig(configPath);
+  config = configStore.ensureConfig(configPath); // 首启即落盘一份含全部默认值的 config.json
   state = configStore.loadState(statePath);
   runtime = scheduler.normaliseRuntime(state.scheduler, Date.now());
 }
 
 function createPetWindow() {
+  positionReady = false;
   baseBounds = restoreBaseBounds();
   win = new BrowserWindow({
     x: baseBounds.x,
@@ -229,6 +292,19 @@ function createPetWindow() {
   });
   win.once('ready-to-show', function () {
     win.show();
+    // 首启的 baseBounds 来自 defaultBaseBounds()（右下角）：先把它坐实，再放行落盘。
+    // 顺序很关键 —— setBounds 之前读到的坐标是占位值，写下去就成了「永久左上角」。
+    win.setBounds(baseBounds);
+    positionReady = true;
+    log(
+      '窗口就绪：baseBounds =',
+      JSON.stringify(baseBounds),
+      '；win.getBounds() =',
+      JSON.stringify(win.getBounds()),
+      '；主屏 =',
+      JSON.stringify(primaryDisplayInfo())
+    );
+    persistPosition();
     pushConfig();
   });
   win.on('closed', function () {
@@ -306,6 +382,7 @@ function toggleVisibility() {
 
 function quitApp() {
   quitting = true;
+  persistPosition();
   persistState();
   app.quit();
 }
@@ -328,8 +405,8 @@ function setPinned(value) {
 
 function resetPosition() {
   baseBounds = defaultBaseBounds();
-  persistPosition();
   syncWindowBounds();
+  persistPosition();
   return { ok: true, x: baseBounds.x, y: baseBounds.y };
 }
 
@@ -344,8 +421,8 @@ function recenterForSize() {
     width: size.width,
     height: size.height,
   });
-  persistPosition();
   syncWindowBounds();
+  persistPosition();
 }
 
 let settingsShownAt = 0;
@@ -512,8 +589,8 @@ function registerIpc() {
     });
     dragSession = null;
     runtime = scheduler.recordDrag(runtime, Date.now(), false);
-    persistPosition();
     syncWindowBounds();
+    persistPosition();
   });
   ipcMain.on('pet:bubble-resize', function (event, size) {
     if (!size || !Number.isFinite(size.height)) {
@@ -658,6 +735,15 @@ async function runSelfCheckFlow() {
       win: win,
       tray: tray,
       config: config,
+      workArea: workAreaFor(baseBounds),
+      minVisible: function () { return MIN_VISIBLE; },
+      petBaseBounds: function () { return Object.assign({}, baseBounds); },
+      // 自检专用：把猫摆到指定基准矩形（FIX-2 的「贴屏幕边缘」验收要用），不落盘
+      placePet: function (bounds) {
+        baseBounds = clampToWorkArea(bounds);
+        syncWindowBounds();
+        return Object.assign({}, baseBounds);
+      },
       rendererReport: function () { return rendererReport; },
       settingsWindow: function () { return settingsWin; },
       openSettings: openSettings,
@@ -758,6 +844,7 @@ if (!gotLock) {
   app.on('before-quit', function () {
     quitting = true;
     stopTimers();
+    persistPosition();
     persistState();
   });
   // 桌宠常驻：关掉窗口不等于退出（退出只走托盘/右键菜单）

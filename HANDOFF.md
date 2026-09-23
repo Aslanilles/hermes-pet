@@ -339,3 +339,155 @@ npx electron . --self-check          # 期望 chat-reply 的 source 变成 herme
 - 本地 mock：§2.3 A `chat-reply - local-mock -> 嗯，我在。手上那件事进行到哪了？`；
 - 降级：§2.3 A `.env` 里配了网关但本地没起 → 自动降级到 mock，气泡文案是人话、无状态码；
 - 网关成功路径：§2.3 B 本地替身网关，`chat-reply - hermes-gateway -> ...`，并确认 `Authorization` 头与取值字段都正确。
+---
+
+## 11. 第三轮修复（`docs/M0-FIX-ROUND3.md` FIX-1 ~ FIX-4）逐条交代 + 原始输出
+
+> 前置：容器 `node --test tests/` **86/86**（第二轮 75 + 本轮新增 11）；宿主 `npx electron . --smoke-test` -> `SMOKE_OK`；宿主 `npx electron . --self-check` -> `SELFCHECK_OK 18/18`（第二轮 16 + 本轮新增 2）。下面全是**真跑出来的原始输出**，未加工。
+> 本轮只修缺陷与补文档；除 electron 外零新依赖；`docs/M0-review.md` / `M0-features.md` / `M0-spec.md` / `hermes-pet-product-design.md` / `M0-CODEX-BRIEF.md` / `M0-FIX-ROUND2.md` **未改动**。
+
+### FIX-1（P0）首启落点落到左上角 (0,0) —— ✅ 已修
+
+**根因比任务书猜的「时序」更靠前一层**：`src/core/config.js` 的 `coerceCoord(null)` 走 `Number(null) === 0`，于是「state.json 里根本没有 x/y」被读成了「x = 0, y = 0」；`restoreBaseBounds()` 看到 `Number.isFinite(0)` 成立就以为用户存过坐标，把窗口摆到左上角，后续落盘又把 0/0 固化下来 —— 这就是「永久左上角」。任务书要求的时序防御也一并做全了（见第 3、4 条）：
+
+1. `coerceCoord(null / undefined / '' / 非数字) -> null`（根因修复，`tests/config.test.js` 钉住）；
+2. 新增纯逻辑模块 `src/core/position.js`：`defaultBounds()`（右下角算式）/ `restoreBounds()`（坐标缺失 / 非法 / (0,0) 哨兵 -> 默认右下角；其余 clamp）/ `clampToArea()` / `clampFullyInside()` / `fitInside()`；`src/main.js` 的默认 / 恢复 / 拖拽三条路径全部改走它（`tests/position.test.js` 6 条用例覆盖）；
+3. `persistPosition()` 加闸门：`positionReady`（`ready-to-show` 之后才置 true）之前一律不写；写之前用 `win.getBounds()` 的真实矩形反推基准、再过一遍 `restoreBounds()`（clamp + 挡掉 (0,0)），读不到合法值就放弃这次写入；`resetPosition()` / `recenterForSize()` / `pet:drag-end` 也改成「先把窗口摆好，再落盘」；
+4. `ready-to-show` 里显式 `win.setBounds(baseBounds)` 之后才 `persistPosition()`：首启就会写出一份合法的右下角坐标。
+
+**验收（任务书三条命令的原始输出）**：
+
+```powershell
+PS> Get-Process electron | Stop-Process -Force        # 任务书：先关掉屏幕上的旧实例
+PS> Remove-Item "$env:APPDATA\hermes-pet\state.json" -Force
+PS> Get-ChildItem "$env:APPDATA\hermes-pet" -Filter "*.json" | Select-Object Name,Length
+
+Name        Length
+----        ------
+config.json    146
+
+PS> npx electron . --smoke-test
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 窗口就绪：baseBounds = {"x":1272,"y":684,"width":144,"height":144} ；win.getBounds() = {"x":1272,"y":684,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true}
+exit_code=0
+
+PS> Get-Content "$env:APPDATA\hermes-pet\state.json"
+{
+  "schemaVersion": 1,
+  "x": 1272,
+  "y": 684,
+  "paused": false,
+  "pinned": false,
+  "scheduler": { "lastActivityAt": 1790163723475, "sessionStartAt": 1790163723475, "lastTickAt": 1790163724530, "lastProactiveAt": 1790163724530, "lastProactiveKind": "greeting", "dailyCount": 1, "dailyCountDate": "2026-09-23", "greetedDate": "2026-09-23", "sunsetDate": null, "ignoredDate": null, "ignoredKinds": [], "dragging": false, "dragEndedAt": null, "dialogueOpen": false, "typing": false }
+}
+```
+
+**关于 x=1272 / y=684 与任务书「期望 x≈1128、y≈588」的差异（必须说清，不是没修好）**：任务书括号里的算式 `1440-288-24 / 900-288-24` 把**物理像素的窗口宽度**（288 = 144 DIP × 2）和**逻辑像素的屏幕尺寸**（1440x900）混在了一起。本机实测（上面「主屏 =」那行就是原始输出，`scaleFactor: 2`）：
+
+- 逻辑 workArea = `1440 x 852`（`900 - 48` 是任务栏），窗口逻辑尺寸 `144 x 144`（= 猫 120 + 四周内边距 24）—— **换算成物理像素正好就是任务书测到的 288 x 288**；
+- 同一条算式在**逻辑像素**下：`1440 - 144 - 24 = 1272`、`852 - 144 - 24 = 684`，与 state.json 落盘值**完全一致**；
+- 换算到**物理像素**：`2880 - 288 - 48 = 2544 = 1272 x 2`、`1704 - 288 - 48 = 1368 = 684 x 2`，右下角留白 24 DIP（= 48 物理）✔。
+
+结论：算式、留白、落盘值三者自洽，窗口确实出现在**屏幕右下角**，且 `win.getBounds()` 与 `baseBounds` 完全相同（说明「窗口真实位置」和「我们以为的位置」没有偏差）。
+
+### FIX-2（P1）288 窗口与「气泡最大宽 320」不自洽 —— ✅ 已修（选方案 b）
+
+**选 (b) 不选 (a) 的理由**：(a) 把窗口固定成 360x440 会正面违反 `docs/M0-CODEX-BRIEF.md` §3 F1「窗口尺寸随『显示大小』设置变化，重启后保持」（第二轮已按 BRIEF 的优先级声明裁决过同一处冲突），而且会把 FIX-1 的落点算式整体改掉；(b) 只改气泡自身的宽度约束，窗口行为、位置持久化、`size` 60-180 的设置链路一概不动 —— 本轮是修缺陷，不是改设计。
+
+改动：
+
+- `src/renderer/pet.css`：`.bubble` 的 `max-width: 320px` -> `max-width: min(320px, calc(100vw - 16px))`（**不超过窗口内宽**）；`max-height: 400px` + `overflow-y: auto` 保持，长文本 `pre-wrap / break-word` 换行照旧；
+- 顺带把任务书验收里那条「贴屏幕边缘也不被裁」做实：`windowBoundsForBubble()` 现在把气泡窗口整体收进 workArea（`position.fitInside`），并把两处平移量发给渲染进程 —— `catX/catY` 给 `#stage`（**猫在屏幕上的位置一动不动**）、`bubbleX/bubbleY` 给 `.bubble`（气泡单独挪回屏内）。坐标全部由主进程按 `win.getBounds()` 算（渲染进程的 `window.screenX` 会滞后于窗口真实位置，不能当基准 —— 第一版就是踩了这个坑，`--self-check` 当场抓出来）。
+
+**验收（`npx electron . --self-check`，本轮新增 2 项专门盯这条）**：
+
+```
+[hermes-pet] [selfcheck] OK   bubble-fully-visible-at-screen-edge - 气泡屏幕矩形={"width":136,"height":400,"left":1304,"top":408,"right":1440,"bottom":808,"scrollable":true} workArea={"x":0,"y":0,"width":1440,"height":852}
+[hermes-pet] [selfcheck] OK   bubble-long-text-scrolls - scrollHeight > clientHeight = true
+```
+
+（这一项先把猫摆到 workArea 最右下角 —— 拖拽 clamp 允许的极限，窗口只留 48px 在屏内 —— 再塞 200+ 字长文本；气泡的屏幕矩形 `[1304,1440] x [408,808]` 完全落在 workArea 内、没有被裁，且内容超出 400px 上限后确实可滚。）
+
+把猫缩到 60px 再跑同一套（临时把 `config.json` 的 `size` 改成 60，跑完已还原成 120）：
+
+```
+[hermes-pet] [selfcheck] OK   pet-size-var - --pet-size=60px
+[hermes-pet] [selfcheck] OK   window-grows-for-bubble - 84 -> 201
+[hermes-pet] [selfcheck] OK   bubble-fully-visible-at-screen-edge - 气泡屏幕矩形={"width":136,"height":400,"left":1304,"top":408,"right":1440,"bottom":808,"scrollable":true} workArea={"x":0,"y":0,"width":1440,"height":852}
+[hermes-pet] [selfcheck] OK   bubble-long-text-scrolls - scrollHeight > clientHeight = true
+SELFCHECK_OK 18/18
+```
+
+**取舍（如实交代）**：窗口宽度 = 猫的显示大小 + 24，所以气泡宽度被钳在「窗口内宽」（默认 120 的猫 -> 136px 宽气泡；60 的猫 -> 136px；180 的猫 -> 180px，默认配置走 `windowBoundsForBubble` 里 160px 的地板），`320px` 从此是**上限**而不是**承诺值**；换来的是「永远不被窗口/屏幕裁掉 + 长文本换行可滚」。若以后确实要让气泡长到 320px，需要回到方案 (a)（固定大窗口），那要先把 BRIEF F1 的「窗口随显示大小变化」改掉。
+
+### FIX-3（P2）`config.json` 首启不落盘 —— ✅ 已修
+
+- `src/core/config.js` 新增 `ensureConfig(filePath)`：文件缺失 / 空 / 损坏 -> **原子写**一份含全部默认值的 `config.json`；已存在且可解析 -> 原样返回，**绝不覆盖用户改过的值**；写盘失败（只读目录等）也不让程序起不来。`src/main.js` 的 `loadPersisted()` 改用它。
+- **默认值清单**（就是写进文件的内容，以后加字段请以这份为迁移锚点）：
+
+| 字段 | 默认值 | 含义 |
+|---|---|---|
+| `schemaVersion` | `1` | 配置结构版本 |
+| `nickname` | `"琉斯"` | 猫对用户的称呼 |
+| `size` | `120` | 显示大小（px，合法区间 60-180） |
+| `proactiveEnabled` | `true` | 是否允许主动开口 |
+| `launchAtLogin` | `false` | 开机自启 |
+| `deepNightEnabled` | `true` | 22:00-07:00 深夜模式 |
+
+**原始输出（首启后直接打开文件即可人工验收）**：
+
+```
+PS> Get-ChildItem "$env:APPDATA\hermes-pet" -Filter "*.json" | Select-Object Name,Length
+Name        Length
+----        ------
+config.json    146
+
+PS> Get-Content "$env:APPDATA\hermes-pet\config.json"      # 用 UTF-8 读，控制台里中文可能显示成乱码
+{
+  "schemaVersion": 1,
+  "nickname": "琉斯",
+  "size": 120,
+  "proactiveEnabled": true,
+  "launchAtLogin": false,
+  "deepNightEnabled": true
+}
+```
+
+（顺带自证了「损坏 -> 自愈」：一开始我用 PowerShell `Set-Content -Encoding UTF8` 写这个文件，PS 5.1 会带 BOM -> JSON 解析失败 -> 程序把文件重写成默认值，`size` 又回到 120。这正是 FIX-3 里那条自愈路径的真实行为。）
+
+### FIX-4（P2）`M0-sprite-map.md` 的 talk/listen/drag 映射缺位 —— ✅ 已补
+
+- 在 `docs/M0-sprite-map.md` **末尾追加第 6 节**「M0 状态补充映射（复用，不改动原始 17 组）」：`talk` -> `alert [-7,-3]` + `@keyframes talk-tilt`（0.6s 上下 2px）、`listen` -> `idle [-3,-3]` + `@keyframes listen-breathe`（2.4s 呼吸缩放）、`drag` -> `SE [-5,-1]` / `SW [-5,-3]`（`spriteForDrag()` 按方向选，各 2 帧），并写明「本节的权威实现见 `src/core/sprite-frames.js`，两者必须一致」；
+- **原 1-4 节一字未动**（diff 只在文件末尾新增）；
+- 顺手把「文档说单测钉住、单测其实没钉」这件事做实：`tests/sprite-frames.test.js` 新增一条用例，断言 `talk -> alert`（`-224px -96px`）、`listen -> idle`（`-96px -96px`），与第 6 节逐字一致。
+
+### 本轮验收命令原始输出（汇总）
+
+```powershell
+# 容器：零依赖纯逻辑
+$ docker exec -w /workspace hermes-pet-dev node --test tests/
+1..86
+# tests 86
+# suites 0
+# pass 86
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 196.057367
+
+$ docker exec -w /workspace hermes-pet-dev sh -c 'for f in src/main.js src/preload.js src/core/*.js src/adapters/*.js src/renderer/*.js tools/selfcheck.js; do node --check "$f" || exit 1; done; echo ALL_JS_SYNTAX_OK'
+ALL_JS_SYNTAX_OK
+
+# 宿主：GUI（两条都给退出码 0）
+PS> npx electron . --smoke-test
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true}
+
+PS> npx electron . --self-check
+SELFCHECK_OK 18/18
+```
+
+新增 11 条用例（75 -> 86）：`tests/position.test.js` 6 条（右下角算式 / 坐标缺省与 (0,0) 走默认 / 超界 clamp / 多屏 workArea 偏移 / `fitInside` 平移量）、`tests/config.test.js` 4 条（`ensureConfig` 首启落盘、不覆盖用户值、损坏自愈、坐标缺省为 `null`）、`tests/sprite-frames.test.js` 1 条（talk/listen 复用映射）。
+
+**一处说明**：本轮还想再补一张「猫确实在右下角」的截图，但当时桌面上有一个**全屏置顶的视频播放器**，截出来整屏都是它，拿不到可信画面（这不是本轮的回归，`alwaysOnTop`/窗口属性本轮未改）。猫的位置与可见性以 `win.getBounds()`（与 `baseBounds` 逐字相同）+ `--self-check` 的 `window-visible` + 落盘坐标为准；要肉眼复核，关掉全屏视频再 `npx electron .` 即可。

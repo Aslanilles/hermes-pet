@@ -37,6 +37,9 @@ function evalInPage(webContents, fn, arg) {
   return webContents.executeJavaScript(source);
 }
 
+// FIX-ROUND3 FIX-2 验收用的长中文文本：136px 宽的气泡里必然换行 + 超出 400px 上限 -> 必须能滚
+const LONG_TEXT = '拆解它。把大目标拆成今天能做完的一小步，再拆成现在能做的第一步。'.repeat(6);
+
 async function runSelfCheck(ctx) {
   const steps = [];
   function record(name, ok, detail) {
@@ -99,6 +102,61 @@ async function runSelfCheck(ctx) {
   record('click-opens-dialogue', afterClick.bubbleHidden === false && afterClick.composerVisible === true, JSON.stringify(afterClick));
   record('window-grows-for-bubble', opened.height > collapsed.height, collapsed.height + ' -> ' + opened.height);
   record('bubble-width-capped', afterClick.bubbleWidth <= 320, '宽度 ' + afterClick.bubbleWidth + 'px（上限 320）');
+
+  // FIX-ROUND3 FIX-2 验收：把猫摆到 workArea 的最右 / 最下角（拖拽 clamp 允许的极限，
+  // 窗口只留 48px 在屏内），再塞一段长文本 —— 气泡必须仍然完整可见、且能滚动。
+  const originalBase = ctx.petBaseBounds();
+  ctx.placePet({
+    x: ctx.workArea.x + ctx.workArea.width - ctx.minVisible(),
+    y: ctx.workArea.y + ctx.workArea.height - ctx.minVisible(),
+    width: originalBase.width,
+    height: originalBase.height,
+  });
+  await sleep(400);
+  await evalInPage(win.webContents, function (text) {
+    const bubble = document.getElementById('bubble');
+    const bubbleText = document.getElementById('bubble-text');
+    bubbleText.textContent = text;
+    const rect = bubble.getBoundingClientRect();
+    window.hermes.bubbleResize({ width: Math.ceil(rect.width), height: Math.ceil(rect.height) });
+    return true;
+  }, LONG_TEXT);
+  await sleep(800);
+  const atEdge = await evalInPage(win.webContents, function () {
+    const bubble = document.getElementById('bubble');
+    const rect = bubble.getBoundingClientRect();
+    return {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+      left: Math.round(window.screenX + rect.left),
+      top: Math.round(window.screenY + rect.top),
+      right: Math.round(window.screenX + rect.right),
+      bottom: Math.round(window.screenY + rect.bottom),
+      scrollable: bubble.scrollHeight > bubble.clientHeight + 1,
+    };
+  });
+  const inArea =
+    Boolean(atEdge) &&
+    atEdge.left >= ctx.workArea.x &&
+    atEdge.right <= ctx.workArea.x + ctx.workArea.width &&
+    atEdge.top >= ctx.workArea.y &&
+    atEdge.bottom <= ctx.workArea.y + ctx.workArea.height;
+  record(
+    'bubble-fully-visible-at-screen-edge',
+    inArea,
+    '气泡屏幕矩形=' + JSON.stringify(atEdge) + ' workArea=' + JSON.stringify(ctx.workArea)
+  );
+  record('bubble-long-text-scrolls', Boolean(atEdge && atEdge.scrollable), 'scrollHeight > clientHeight = ' + (atEdge && atEdge.scrollable));
+
+  // 收尾：文本复原 + 关气泡 + 猫回原位（自检期间不落盘）
+  await evalInPage(win.webContents, function () {
+    document.getElementById('bubble-text').textContent = '嗯，我在。';
+    document.getElementById('input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    return true;
+  });
+  await sleep(400);
+  ctx.placePet(originalBase);
+  await sleep(300);
 
   const reply = await evalInPage(win.webContents, function () {
     return window.hermes.send('你好').then(function (res) {
