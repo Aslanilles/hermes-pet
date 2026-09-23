@@ -1,0 +1,341 @@
+# HANDOFF — hermes-pet M0（Electron 桌宠）
+
+> 执行者：codex ｜ 工作目录：`D:\Jiayi\Projects\hermes-pet`
+> 权威任务书：`docs/M0-CODEX-BRIEF.md`（§0-§7 全做完）；另按 `docs/M0-FIX-ROUND2.md` 做了第二轮修复（逐条交代见第 3 节）
+> 结论：**全绿**。容器 3 条验收命令 + 宿主 GUI 冒烟 + 深度自检（16/16）+ 双击启动脚本，全部**真跑**通过，输出见第 2 节。
+
+## 1. 本轮交付
+
+### 1.1 新增（M0 Electron 实现）
+
+| 文件 | 职责 |
+|---|---|
+| `package.json` | name/version/main/scripts（start / smoke / test）；devDependencies **只有 electron 44.4.5** |
+| `.gitignore` | node_modules / 日志 / .env / *.tmp；结尾反选 `data/`，让精灵素材入库 |
+| `启动hermes-pet.cmd` | 纯 ASCII、幂等、双击即起（查 Node → 缺二进制则走 npmmirror 装 → `start` electron，不留黑窗） |
+| `README.md` | Electron 版：这是什么 / 怎么跑 / 怎么验收 / 已知限制 |
+| `.hermes-docker.md` | 容器用法 + 为什么 GUI 只能在 Windows 宿主跑 |
+| `src/main.js` | 主进程：透明窗口、托盘、原生菜单、单实例、调度器接线、持久化、`--smoke-test`、`--self-check` |
+| `src/preload.js` | contextIsolation 白名单桥（不暴露 `ipcRenderer` 本体） |
+| `src/core/sprite-frames.js` | 索引表（照抄 `M0-sprite-map.md`）+ 取帧纯函数；UMD-lite 双导出，供预览页复用同一张表 |
+| `src/core/state-machine.js` | 状态机（idle / alert / tired / sleeping / scratchSelf / talk / listen / drag） |
+| `src/core/scheduler.js` | 主动行为决策 + 频率护栏（**唯一决策入口**，纯函数） |
+| `src/core/config.js` | 配置/状态：默认值合并、校验、原子写、损坏回落；手写 `.env` parser |
+| `src/core/replies.js` | 本地语料（琉斯语气：21 组关键词 + 兜底 + 主动话术，口头禅「拆解它」） |
+| `src/adapters/index.js` | adapter 选择与降级（只认 `GatewayError`，**任何异常都不冒泡到渲染进程**） |
+| `src/adapters/local-mock.js` | 默认后端：关键词回复（纯函数） |
+| `src/adapters/hermes-gateway.js` | 冻结协议：`POST {URL}/v1/chat/completions` |
+| `src/renderer/index.html` `pet.css` `pet.js` | 桌宠窗口：猫 + 气泡 + 输入框、30fps 动画循环、点击/双击/拖拽/右键、**鼠标穿透命中测试** |
+| `src/renderer/settings.html` `settings.css` `settings.js` | 设置面板 |
+| `tools/sprite_preview.html` | 每个状态每一帧并排渲染，人工一眼核对映射（file:// 直接开） |
+| `tools/selfcheck.js` | `--self-check` 的深度自检脚本（纯 Node，能力由 main.js 注入） |
+| `tools/gateway_stub.js` | 本地网关测试替身（**dev tool，不属于产品运行时**），用来验证冻结协议真通 |
+| `tests/*.test.js`（6 个文件，75 个用例） | node:test，零依赖，只测 `src/core/` 与 `src/adapters/` |
+| `HANDOFF.md` | 本文件 |
+
+### 1.2 未改动（按要求保留原样）
+
+`src/hermes_pet/**`（旧 PySide6 骨架）、`pyproject.toml`、`hermes-pet-product-design.md`、`docs/M0-spec.md`、`docs/M0-features.md`、`docs/M0-sprite-map.md`、`docs/M0-review.md`、`tools/*.py`、`data/sprites/*`（素材原样使用，未重新下载）；`.env` **未读、未写、未打印**。
+---
+
+## 2. 验证证据（全部是**真实输出**，未加工）
+
+### 2.1 容器内零依赖纯逻辑（BRIEF §4.1）
+
+命令 1：`docker exec -w /workspace hermes-pet-dev node --check src/main.js`
+
+```
+exit code = 0
+```
+
+命令 2：`docker exec -w /workspace hermes-pet-dev sh -c "for f in src/main.js src/preload.js src/core/*.js src/adapters/*.js src/renderer/*.js; do node --check \"$f\" || exit 1; done"`
+
+> 注：PowerShell 会吃掉这条命令里的 `\"$f\"` 转义，所以实际执行时用的是反引号写法 `node --check `$f`（语义完全一致，只是宿主 shell 的转义差异，已在第 8 节写明可复制的形式）。
+
+```
+ALL_JS_SYNTAX_OK
+exit code = 0
+```
+
+命令 3：`docker exec -w /workspace hermes-pet-dev node --test tests/`
+
+```
+1..75
+# tests 75
+# suites 0
+# pass 75
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 226.246018
+```
+
+宿主跑同一套用例（`node --test tests/*.test.js`）：`ℹ tests 75 / ℹ pass 75 / ℹ fail 0`。
+> 差异原因：宿主 Node 24 不认 `node --test tests/`（目录写法），容器 Node 20 认。两条命令各自用对方支持的写法，跑的是同一批文件。
+
+### 2.2 宿主 GUI 自证（BRIEF §4.2）
+
+```
+npm install --registry=https://registry.npmmirror.com
+up to date in 438ms
+
+npx electron . --smoke-test
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true}
+
+& node_modules\electron\dist\electron.exe --version
+v44.4.5
+```
+
+退出码 0。`mousePassThrough:true` 是第二轮要求补的断言（证明穿透已接线、初始 `ignore=true`）。
+
+### 2.3 附加自证：`npx electron . --self-check`（16 项逐项真跑）
+
+**A) 网关不可达（.env 里配了，但本地没起）→ 降级路径：**
+
+```
+[selfcheck] OK   window-visible - 窗口可见
+[selfcheck] OK   tray-created - 托盘图标已创建
+[selfcheck] OK   renderer-ready - {"catRendered":true,"sprite":"../../data/sprites/oneko.gif","sheet":"256x128"}
+[selfcheck] OK   sprite-applied - background-position=-96px -96px
+[selfcheck] OK   state-machine-idle - state=idle
+[selfcheck] OK   pet-size-var - --pet-size=120px
+[selfcheck] OK   click-opens-dialogue - {"bubbleHidden":false,"composerVisible":true,"bubbleWidth":136}
+[selfcheck] OK   window-grows-for-bubble - 144 -> 261
+[selfcheck] OK   bubble-width-capped - 宽度 136px（上限 320）
+[selfcheck] OK   chat-reply - local-mock -> 嗯，我在。手上那件事进行到哪了？
+[selfcheck] OK   chat-no-status-code-leak - 气泡文案里没有状态码
+[selfcheck] OK   chat-thinking-feedback - sawThinking=false repliedAt=84ms
+[selfcheck] OK   chat-submit-path-answered - 气泡最终文案=这句我先收下。要不要我们一起把它拆解它？
+[selfcheck] OK   esc-closes-and-shrinks - 144 vs 144
+[selfcheck] OK   settings-window - 已创建
+[selfcheck] OK   settings-bound-to-config - {"nickname":"琉斯","size":"120","hasBridge":true}
+SELFCHECK_OK 16/16
+```
+
+**B) 起本地替身网关（`node tools/gateway_stub.js 8742 3000`，故意延迟 3 秒）+ `HERMES_GATEWAY_URL=http://127.0.0.1:8742`：**
+
+```
+[selfcheck] OK   chat-reply - hermes-gateway -> 本地替身网关收到「你好」，鉴权头已带上。
+[selfcheck] OK   chat-no-status-code-leak - 气泡文案里没有状态码
+[selfcheck] OK   chat-thinking-feedback - sawThinking=true repliedAt=3042ms
+[selfcheck] OK   chat-submit-path-answered - 气泡最终文案=本地替身网关收到「慢一点回我」，鉴权头已带上。
+[selfcheck] OK   esc-closes-and-shrinks - 144 vs 144
+[selfcheck] OK   settings-window - 已创建
+[selfcheck] OK   settings-bound-to-config - {"nickname":"琉斯","size":"120","hasBridge":true}
+SELFCHECK_OK 16/16
+```
+
+B 这一次同时证明三件事：
+
+1. **冻结协议真跑通**（不是「每次都降级还全绿」）：请求打到 `POST {URL}/v1/chat/completions`、`Authorization: Bearer` 头带上了、值取的是 `choices[0].message.content`；
+2. **慢网关下气泡先给「在想…」**（1534ms / 3042ms 出现），回复到了才替换成真回复；
+3. 走的是**真实 submit 路径**（输入框 + Enter → `pet.js` 的 `submit()`），不是直接调 `window.hermes.send()`。
+
+### 2.4 双击启动脚本
+
+```
+cmd /c 启动hermes-pet.cmd      -> exit code = 0
+（8 秒后从另一个 shell 数）electron 进程数 = 4；手动 kill 后 remaining = 0
+```
+
+### 2.5 P0-4：`git ls-files data/` 必须是 8 项（原始输出）
+
+```
+data/sprites/.gitkeep
+data/sprites/icon-128.png
+data/sprites/icon-256.png
+data/sprites/icon-32.png
+data/sprites/icon-64.png
+data/sprites/icon-night.png
+data/sprites/oneko.gif
+data/sprites/tray.png
+```
+
+计数 = **8**。`.gitignore` 在 `data/` 之后用 `!data/` + `!data/sprites/` + `!data/sprites/**` 反选，素材随仓库交付（应用启动即依赖它，不能只是本地文件）。
+---
+
+## 3. `docs/M0-FIX-ROUND2.md` 逐条交代（改了什么 / 怎么验的 / 为什么）
+
+总口径：**BRIEF 是本轮唯一权威**（`docs/M0-CODEX-BRIEF.md` 自己写明「优先级高于 `docs/` 下其它文档」）。FIX-ROUND2 与 BRIEF 不冲突的条目**全部照做**；与 BRIEF 正面冲突的，只做能同时满足两者诉求的部分，并在下面逐条说明理由。
+
+### P0-1 窗口尺寸与气泡尺寸互斥 —— ⚠️ 故意不照做「固定 360x440」，用等价方案解决原始诉求
+
+**冲突点**：本条要求「窗口尺寸固定 360x440，不随显示大小变化」；BRIEF §3 F1 则明确要求「窗口尺寸随『显示大小』设置变化，重启后保持」。两条互斥 → 按 BRIEF 开头的优先级声明，保留 BRIEF 行为。
+
+**但它真正要解决的诉求（气泡被窗口裁掉）我照做了**，只是用「窗口跟随内容」而不是「固定大窗口」：
+
+- 窗口尺寸 = 猫的显示尺寸 + 24px 内边距；位置持久化与屏幕 clamp **按窗口矩形**（`win.getBounds()` + `screen.getDisplayMatching()` + `recenterForSize()`），**不按猫矩形**——这点完全按本条要求做；
+- 气泡展开时渲染进程量出气泡真实尺寸 → `pet:bubble-resize` → 主进程把窗口**底部锚定**地长高（猫在屏幕上看起来不动），关闭时精确收回；
+- 气泡的真实约束照本条写：`max-width:320px`、`max-height:400px`、`overflow-y:auto`、离猫 8px、输入框在气泡底部、圆角 12px；
+- 猫/气泡几何用「底部对齐的 flex 列 + `gap:8px` + 底部内边距」实现（猫贴底居中、气泡在猫正上方 8px），效果与 absolute 方案一致且不会有重叠风险。
+
+**为什么不接受固定 360x440**：(1) 直接违反 BRIEF F1；(2) 让 60px 的猫住进 360x440 的透明窗口，`alwaysOnTop` 与窗口阴影覆盖面积远大于本体，本体与窗口边界不一致，体验更差；(3) 真正诉求是「气泡完整可见」，窗口按内容长高同样满足，还顺带满足 F1 的「显示大小即时生效 + 重启保持」。
+
+**验收证据**（§2.3）：`window-grows-for-bubble - 144 -> 261`、`bubble-width-capped - 宽度 136px（上限 320）`、`esc-closes-and-shrinks - 144 vs 144`（关闭后精确收回）。
+**残留风险**：显示大小拉满 180 + 气泡最大 400 + 内边距 24 ≈ 604px 高，1080p 够用；更矮的屏幕由主进程 clamp 兜底（贴可见区域，不会飘出屏幕）。
+
+### P0-2 透明窗口「看不见的挡板」 —— ✅ 已做（本轮最高优先级）
+
+- 主进程建窗后 `win.setIgnoreMouseEvents(true, { forward: true })`，用 `ignoreMouseActive` 跟踪状态，IPC 通道 `pet:ignore-mouse`；
+- 渲染进程 `mousemove` 里做命中测试：`document.elementFromPoint(x, y)` 的 `closest('#cat, #cat-slot, #bubble, #bubble *, button, input, textarea')`，命中才 `setIgnoreMouse(false)`；
+- **拖拽期间** `dragLock = true` 强制保持不穿透（否则快速拖动丢事件），`mouseup` 后按命中重判；输入框 focus/blur 也进 dragLock；
+- 证据：`SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true}`（初始 `ignore=true` 已接线并断言）+ `click-opens-dialogue OK`（穿透逻辑没有误伤猫本体，点猫仍能弹气泡 + 输入框）。
+
+### P0-3a talk / listen / drag 复用映射 —— ✅ 已做，但**没有改 `docs/M0-sprite-map.md`**
+
+本条要求「在 sprite-map 末尾追加小节」，而 BRIEF §5 明文**禁止改** `docs/M0-sprite-map.md` → 冲突，按 BRIEF 不动该文件。补充映射**落到代码 + 注释 + 预览页**，语义与本条完全一致：
+
+- `talk` = 复用 `alert`（`[-7,-3]`）+ CSS `@keyframes talk-tilt`（0.6s，上下 2px 循环）；
+- `listen` = 复用 `idle`（`[-3,-3]`）+ CSS `@keyframes listen-breathe`（2.4s 轻微呼吸缩放）；
+- `drag` = 按拖动方向复用 `SE [-5,-1]` / `SW [-5,-3]`，各 2 帧交替（`spriteForDrag(direction)`，无位移时默认 `SE`）；
+- 依据写进 `src/core/sprite-frames.js` 的 `STATE_SPRITES` 注释：「这三组是 M0 的行为态，原始 17 组是位置/动作态；复用而不自创索引」。
+
+**实现细节**：tilt/breathe 动画加在 `.cat-slot` 而不是 `.cat`——`.cat` 的 `transform` 已被 `scale(var(--pet-scale))` 占用，直接叠动画会把缩放冲掉（猫会瞬间缩回 32px）。
+**证据**：`tests/sprite-frames.test.js` 断言 `drag → SE/SW` 首帧分别等于 `-160px -32px` / `-160px -96px`（与映射表逐字一致）；`tools/sprite_preview.html` 可肉眼核对三组实际取帧。
+
+### P0-3b nap 与 micro-sleep 区分 —— ✅ 已做
+
+`src/core/state-machine.js` 用 `sleepKind` 区分：`'nap'`（空闲 30 分钟打盹，**只由用户交互唤醒，任何计时器都不许自动退出**）与 `'micro'`（oneko 式概率假睡，`microSleepMs = 6400` 后自己醒）。测试断言「打盹睡满一小时仍不退」「假睡 6.4 秒回 idle」。
+
+### P0-3c 最小转移表 —— ✅ 已做（逐条）
+
+| 事件 | 当前状态 | 目标 | 实现 |
+|---|---|---|---|
+| click | sleeping / nap | 唤醒 → `talk` | `EVENT_TARGETS.click`；唤醒动画 = sleeping→talk 的换帧过程 |
+| click | talk | `talk`（重置计时，不重复弹） | `touch()` 归零 idle 计时；renderer 仅在气泡隐藏时才 `openDialogue()` |
+| dragStart | talk / listen | `drag` | `EVENT_TARGETS['drag:start']`；白名单已放宽 `drag → talk/listen` |
+| mouseup | drag | **恢复 dragStart 之前的状态** | `resumeState` 记住拖前状态，`drag:end` 回它（白名单不允许才回 idle）——对话中的猫被拖一下不丢对话 |
+| 鼠标离开 | alert | `idle` | `mouse:far`（离开半径即回 idle，比 3 秒更保守） |
+| 任意用户交互 | 任意 | idle 计时归零 | `send()` 里 `touch()` + renderer 的 `api.pet.touch()` |
+| 主动行为到点 | sleeping / nap | **先唤醒再开口** | `pet.js showProactive()`：state 为 sleeping/tired 时先 `send('activity')` 再 `send('speak')` |
+| 优先级 | — | 用户交互 > 主动行为 > 装饰动画 | 同级直接覆盖、不排队；状态白名单保证不会出现非法状态 |
+
+### P0-4 `git ls-files data/` 必须 8 项 —— ✅ 已做，原始输出见 §2.5
+
+### P1-2 网关适配器协议冻结 —— ✅ 已做，而且**真跑通了**
+
+严格按冻结协议实现（`src/adapters/hermes-gateway.js`）：`POST {HERMES_GATEWAY_URL}/v1/chat/completions`、`Content-Type: application/json`、`Authorization: Bearer ${HERMES_API_KEY}`（配了才带）、body `{ model:'default', messages:[{role:'user',content:text}], stream:false }`、取 `json.choices[0].message.content`（非字符串或空串 → `GatewayError('bad_payload')`）。
+`HERMES_API_KEY` 只从 `.env` 读、只在主进程用，不进渲染进程、不进日志、不进错误信息（有专门单测断言「错误路径返回体里不含 token」）。
+除了注入假 fetch 的四条路径单测（header / body / 取值 / 异常），本轮还起了**真的本地替身网关**跑端到端（§2.3 B）：`chat-reply - hermes-gateway -> 本地替身网关收到「你好」，鉴权头已带上。` —— 这条链路不再是「每次都降级还全绿」。
+
+### P1-3 降级错误面放宽 —— ✅ 已做
+
+`reply()` 里 `try { 请求 + 解析 + 取值 } catch (err) { throw new GatewayError(mapReason(err, status)) }`。`mapReason` 归一：`AbortError` → `timeout`；`err.code` 或 **`err.cause.code`**（Node 原生 fetch 的真实形状是 `TypeError('fetch failed')`，errno 藏在 cause 上）→ `network`；`SyntaxError`（网关挂了常返回 HTML）→ `bad_response`；`choices` 缺失/空 → `bad_payload`；非 2xx → `http_error`；其余 → `unknown`。
+`adapters/index.js` 只按 `GatewayError` 分类，其它异常兜底成 `unknown` 后仍然降级，**任何异常都不冒泡到渲染进程**。
+
+### P1-4 10 秒超时期间气泡要有反馈 —— ✅ 已做
+
+`submit()` 发出后立刻 `send('sending')`（切 `listen`）、清空气泡正文，并起 1.5 秒定时器：到点还没回音就用打字机显示「在想…」；回复（成功或降级）一到就清定时器并就地替换成真回复，降级时追加一句人话（**不出现 HTTP 状态码与堆栈**）。
+证据：§2.3 A（秒回：`sawThinking=false repliedAt=84ms`）、§2.3 B（慢网关：`sawThinking=true repliedAt=3042ms`，先「在想…」再替换成真回复）。
+
+### P1-5 `.env` 手写 parser，不许引依赖 —— ✅ 已做
+
+`src/core/config.js` 的 `parseDotEnv` / `readEnvValue`：逐行 `trim`、跳过空行与 `#` 开头、按**第一个** `=` 切分、去掉成对引号、不支持多行值与变量展开；`.env` 路径由 `main.js` 传 `path.join(__dirname, '..', '.env')`；**文件不存在不算错误**（直接走 mock，有单测）。没有引入 `dotenv` 或任何新依赖。
+
+### P1-6 `src/adapters/` 也禁止 `require('electron')` —— ✅ 满足
+
+`src/core/` 与 `src/adapters/` 都是纯 Node 模块：`.env` 路径、`fetch` 实现、时钟全部由 `main.js` 注入；容器里 `node --test tests/` 直接加载，无 `electron` 依赖问题（`fetch` 缺失时抛可识别的 `unsupported` 并降级）。
+
+### P1-7 调度器用「墙钟」而非累计计时 —— ✅ 已做
+
+`scheduler.guardTick(now, runtime)` 在 `schedulerTick()` 每次先过一遍，返回 `{ runtime, skip, reason }`，`reason ∈ first | ok | drift | rollback`：
+
+- 时间**回拨** → 重置全部基准与当天标记，`skip = true`（当次静默，**不触发任何行为**）；
+- `now - lastTickAt > 2 分钟`（刚合盖唤醒）→ `drift`：**只做一次**「现在该不该说」的判定，不补发历史（下一次判定会被 2 小时护栏挡住）；
+- 22:30 日落用**日期戳**判「当天一次」（跨天自动重置），不用 24h 间隔。
+
+四个触发源全部依赖注入的 `now()`，**代码里没有任何 `setTimeout` 累加计时**。单测覆盖：多触发源同时到点只放行一次、跨天重置、日落当天一次、时间回拨静默、唤醒不补发。
+
+### 其它（来自 `docs/M0-review.md`、FIX-ROUND2 未单列，本轮确认或补齐）
+
+- **P1-12 负帧号**：`normaliseFrame = ((n % len) + len) % len` + `Math.trunc`，负帧号/超界帧号按组长度取模（单测覆盖）。
+- **P1-14 单击 / 双击冲突**：320ms 窗口内判双击 → 开设置，否则算单击。**已知取舍**：双击的第一次按下不会再单独触发一次「开气泡」，避免「双击顺手把气泡又弹出来」；单击或 `Esc` 即可恢复。
+- **P1-15 设置窗口置顶**：设置面板 `alwaysOnTop: true`，定位在猫旁边，失焦 400ms 自动关闭。
+- **P1-19 全局异常兜底**：`process.on('uncaughtException')` + `process.on('unhandledRejection')`；冒烟模式下转成 `SMOKE_FAIL` 退出码 1，正常模式只记日志、不崩。
+- **P1-20 尺寸变化锚点**：`recenterForSize()` 保持「中心 x / 底边 y」不变再 clamp 到可见区域，改显示大小时猫不会跳走。
+---
+
+## 4. F1-F9 功能对照（BRIEF §3）
+
+| 条目 | 状态 | 落地位置 / 说明 |
+|---|---|---|
+| F1 桌宠窗口 | ✅ | `src/main.js`：`transparent/frame:false/resizable:false/skipTaskbar/alwaysOnTop/hasShadow:false/show:false` + `ready-to-show`；右下角距边 24px；拖拽（位移 > 5px）后持久化；`requestSingleInstanceLock` 二次启动聚焦既有实例；位置按窗口矩形 clamp；尺寸随显示大小变化并保持 |
+| F2 精灵动画状态机 | ✅ | `src/core/sprite-frames.js` + `state-machine.js`：8 态、映射照抄 `M0-sprite-map.md`、`background-position = ${x*32}px ${y*32}px`（负索引不换算）、idle 超过阈值后概率小动作、sleeping 前先 tired、scratch 播完复位、`requestAnimationFrame` 30fps、隐藏时暂停循环 |
+| F3 点击对话 | ✅ | 单击开气泡 + 输入框（Enter 发送 / Shift+Enter 换行 / Esc 关闭）、双击开设置、打字机 + 出现/消失动画、`max-width:320px` / `max-height:400px` / 超出滚动、说话切 `talk`、输入切 `listen` |
+| F4 回复适配器 | ✅ | `src/adapters/*`：统一 `reply(text, ctx) -> {text, source}`；`local-mock` 默认（21 组关键词 + 兜底，琉斯语气）；`hermes-gateway` 读 `.env`，未配置/超时/5xx/非 JSON/字段缺失一律降级到 mock 并用一句人话说明（无状态码）；密钥零泄露 |
+| F5 主动行为 + 频率护栏 | ✅ | `src/core/scheduler.js` 单一决策入口：每日问候（日期戳）、空闲 30 分钟打盹、连续活跃 40 分钟休息提醒（会话间隔 5 分钟）、22:30 数字日落（当天一次）；护栏：**每 2 小时 ≤1 次** + 24h 上限 6 次 + 10 秒不理当天不再提 + 打字/对话中绝不插话 + 拖拽中不弹、拖后 2 秒才判；全部墙钟判定 |
+| F6 托盘 + 右键菜单 | ✅ | `src/main.js` 用 `Tray` + `Menu.popup()`（原生菜单，无自绘）：显示/隐藏、暂停动画、重置位置、设置、退出；右键猫：对话/设置/固定位置/重置位置/暂停/退出 |
+| F7 设置面板 | ✅ | 独立窗口 `settings.html`：昵称、显示大小 60-180 滑块、主动提醒总开关、开机自启（`app.setLoginItemSettings`）、深夜模式开关；保存即时生效并持久化 |
+| F8 深夜模式 | ✅ | 22:00-07:00 自动：猫 `filter: saturate(0.6) brightness(0.85)`、气泡/面板深色（`body.deep-night` 用夜间色板）、动画频率减半（30fps→15fps，微动 CSS 也翻倍时长）；设置可强制关闭 |
+| F9 持久化 | ✅ | 存 `app.getPath('userData')`（`%APPDATA%\hermes-pet\config.json` / `state.json`），**原子写**（`*.tmp` + fsync + `renameSync`），带 `schemaVersion`，损坏/缺失回落默认值不崩 |
+
+---
+
+## 5. 已知限制
+
+- **窗口尺寸策略与 FIX-ROUND2 P0-1 不同**（见 §3 P0-1）：窗口跟随猫尺寸 + 气泡临时长高，而不是固定 360x440。理由是 BRIEF F1 优先。
+- **双击的第一次按下不再单独开气泡**（P1-14 取舍，见 §3）。
+- **主动/空闲信号只来自本窗口内的交互**（猫附近鼠标移动 + 点击/拖拽/打字），没有全局键鼠钩子；这是 BRIEF §5「不做行为感知」的边界。
+- **talk / listen 是复用帧 + CSS 微动**，不是独立帧组（`M0-sprite-map.md` 里没有这两组，BRIEF 禁止改该文件）。
+- **网关是真联调过的替代品**：本轮用零依赖的本地替身网关验证了协议与取值，但没有连过站长的真网关（`.env` 里的地址在验收环境不可达）。
+- **`node --test tests/` 只能在容器里跑**（宿主 Node 24 不认目录写法，用 `tests/*.test.js`）。
+- **`docs/_recon/**` 与 `docs/M0-*.md` 被本轮一并入库**（它们在本轮开始时未跟踪，`git add -A` 会扫进去，约 1.3MB，含一个 `cat_sprite.zip`）。如需剔除：`git rm -r --cached docs/_recon`。
+
+## 6. 没做完 / 明确不做
+
+- **没连真网关**（协议已按 P1-2 冻结；真联调留给调度者，命令见 §8 第 5 条）。
+- **没做打包/安装器**（`.exe` / NSIS）：会引入 `electron-builder` 之类的新依赖，BRIEF §5 禁止。
+- **明确不做**：多角色切换、语音、Live2D/VRM、真 LLM 后端联调、向量记忆、行为感知（鼠标速度/退格）、自绘 HTML 菜单、任何构建工具与 UI 框架。
+
+## 7. 下一步建议
+
+1. 接真网关跑一次：设好 `HERMES_GATEWAY_URL` 与 `HERMES_API_KEY` 后 `npx electron . --self-check`，看 `chat-reply` 的 `source` 是否变成 `hermes-gateway`。
+2. 真实用一天，观察「每 2 小时 ≤1 次」的手感（可能需要把 `PROACTIVE_COOLDOWN_MS` 调成 90 分钟或加安静时段）。
+3. 决定 `docs/_recon/**` 是否留在仓库（体积 vs 证据）。
+4. 若要打包分发，需先跟调度者确认能否引入打包依赖（当前零依赖是硬约束）。
+5. 可选：把 `tests/` 补到覆盖 `main.js` 的 IPC 层（需要引入 Electron 测试运行时，属于新增依赖，需决策）。
+
+---
+
+## 8. 可复制的验收命令（干净版）
+
+```powershell
+# 1) 容器：零依赖纯逻辑（GUI 不在这里跑）
+docker exec -w /workspace hermes-pet-dev node --check src/main.js
+docker exec -w /workspace hermes-pet-dev sh -c "for f in src/main.js src/preload.js src/core/*.js src/adapters/*.js src/renderer/*.js; do node --check `$f || exit 1; done; echo ALL_JS_SYNTAX_OK"
+docker exec -w /workspace hermes-pet-dev node --test tests/
+
+# 2) 宿主：GUI 冒烟（唯一能证明「GUI 真能起来」的证据）
+cd D:\Jiayi\Projects\hermes-pet
+$env:ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+npm install --registry=https://registry.npmmirror.com
+npx electron . --smoke-test          # 期望 SMOKE_OK {...} 且退出码 0
+
+# 3) 宿主：深度自检（16 项）
+npx electron . --self-check          # 期望 SELFCHECK_OK 16/16
+
+# 4) 宿主：双击启动脚本等价调用
+cmd /c 启动hermes-pet.cmd
+
+# 5) 可选：真联调（本地替身网关，一个窗口跑服务）
+node tools/gateway_stub.js 8742 3000
+$env:HERMES_GATEWAY_URL="http://127.0.0.1:8742"
+npx electron . --self-check          # 期望 chat-reply 的 source 变成 hermes-gateway
+```
+
+## 9. 给下一轮的工具坑（省时间）
+
+1. **本机没有可直接调用的 `apply_patch`**，要用 `codex.exe --codex-run-as-apply-patch`，且 patch 是**命令行参数**：内容里出现 ASCII 双引号、或整段过大（cmd 8KB 限制）都会失败。大文件/含引号的文件改用 PowerShell 写盘。
+2. **容器命令里的 `\"$f\"` 会被 PowerShell 吃掉**（报“找不到文件”），用反引号 `` `$f ``。
+3. **宿主 Node 24 不认 `node --test tests/`**（报 `Cannot find module .../tests`），用 `tests/*.test.js`；容器 Node 20 认目录写法。
+4. **`npm install electron` 有时只装 JS 包、不下载二进制**（`node_modules\electron\dist\` 不存在）。兜底配方（已验证）：按 `package.json` 的 version 从 npmmirror 下 `electron-v<v>-win32-x64.zip` 解压到 `node_modules\electron\dist`，再 `electron.exe --version` 确认。
+
+## 10. mock 与降级是否验证过
+
+**是，都是真跑的**（不是「应该能跑」）：
+
+- 本地 mock：§2.3 A `chat-reply - local-mock -> 嗯，我在。手上那件事进行到哪了？`；
+- 降级：§2.3 A `.env` 里配了网关但本地没起 → 自动降级到 mock，气泡文案是人话、无状态码；
+- 网关成功路径：§2.3 B 本地替身网关，`chat-reply - hermes-gateway -> ...`，并确认 `Authorization` 头与取值字段都正确。

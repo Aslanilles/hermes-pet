@@ -1,0 +1,36 @@
+﻿adryd325/oneko.js	1320	JavaScript	MIT	2022-04-20T05:17:50Z	2025-10-29T17:12:30Z	3	Cat follow mouse real! A script I wrote to put a cat on my site.
+glreno/oneko	261	Java	Unlicense	2019-01-18T21:25:58Z	2019-02-02T22:04:01Z	5	The ever popular kitty-that-follows-your-mouse-pointer
+kyrie25/spicetify-oneko	171	JavaScript	MIT	2023-06-09T12:18:01Z	2026-08-09T00:52:32Z	3	cat follow mouse (real). A fork of oneko.js modified for Spicetify
+tie/oneko	149	C	NO-LICENSE	2018-05-28T18:11:00Z	2019-10-08T15:56:32Z	11	(unofficial) oneko-sakura sources Git mirror
+			NO-LICENSE				
+gil/shimeji-ee	60	Java	NOASSERTION(file:licence.txt)	2019-09-05T22:14:01Z	2019-09-05T22:14:27Z	3	One more Shimeji-ee Desktop Pet fork, based on Kilkakon's most recent (v1.0.13) source code, focused on fixing Mac compatibility (for now).
+DalekCraft2/Shimeji-Desktop	51	Java	NOASSERTION(file:LICENSE.txt)	2023-11-13T18:01:46Z	2026-09-10T16:14:08Z	11	A port of Shimeji-ee from JRE 6 to JDK 25. Also has many code changes and bug fixes, but attempts to preserve backward compatibility.
+TigerHix/shimeji-universal	36	Java	NOASSERTION(file:LICENSE)	2015-11-22T11:50:53Z	2021-03-22T06:19:42Z	0	An universal version of shimeji-ee with 64-bit support.
+pixelomer/Shijima-Qt	200	C++	GPL-3.0	2024-07-21T10:33:33Z	2026-04-29T20:42:33Z	47	Shimeji desktop pet runner
+estenv/linux-shimeji	166	Java	Zlib	2012-04-19T10:04:41Z	2025-08-24T17:30:39Z	19	Shimeji for Linux.
+CluelessCatBurger/wl_shimeji	201	C	GPL-2.0	2024-09-01T21:44:11Z	2026-08-13T06:22:31Z	18	Shimeji reimplementation for Wayland in C
+shinyflvre/Mate-Engine	3694	ShaderLab	NOASSERTION(file:LICENSE.md)	2025-03-20T03:41:52Z	2026-01-20T18:46:07Z	127	A free Desktop Mate alternative with a lightweight interface and custom VRM support, though with more features.
+isHarryh/Ark-Pets	1099	Java	GPL-3.0	2022-09-15T02:12:47Z	2026-09-23T08:39:44Z	16	Arknights Desktop Pets | 明日方舟桌宠 (ArkPets)
+ChaozhongLiu/DyberPet	982	Python	GPL-3.0	2022-11-09T21:04:56Z	2026-08-15T01:36:39Z	21	Desktop Cyber Pet Framework based on PySide6
+Adrianotiger/desktopPet	1150	C#	NO-LICENSE	2015-12-19T20:16:52Z	2026-09-11T13:46:11Z	45	Remembering the lovely eSheep (stray sheep) from 1995 - 
+MidraLab/uDesktopMascot	353	C#	Apache-2.0	2025-01-11T12:53:11Z	2026-03-15T18:48:16Z	9	desktop mascot open project
+runcat-dev/RunCat365	10312	C#	Apache-2.0	2020-08-06T16:27:09Z	2026-07-15T12:19:26Z	10	A cute running cat animation on your windows taskbar.
+ayangweb/BongoCat	23549	Vue	MIT	2025-03-28T04:50:22Z	2026-09-23T10:23:08Z	104	🐱跨平台互动桌宠 BongoCat，为桌面增添乐趣！
+nucket/NekoAI	17	TypeScript	MIT	2026-04-16T08:53:55Z	2026-09-22T11:33:34Z	20	🐱 AI-powered desktop pet inspired by the classic Neko. Roams your screen, reacts to your windows, and chats with you via Gemini, Claude, OpenAI, nVidia NIM or Ollama. Built with Tauri + Rust. 
+ChanceYu/CoPet	31	Rust	MIT	2026-05-18T06:07:17Z	2026-07-15T09:19:33Z	1	🐾 A desktop pet that reacts in real time to your AI agents — Claude Code, Codex, Antigravity, OpenCode, Cursor, Copilot, Gemini.
+yanhanruan/Mutsumi	238	Rust	NO-LICENSE	2026-05-20T19:55:13Z	2026-08-31T08:10:53Z	3	Mutsumi (睦) : Lightweight AI desktop companion built with Tauri 2 and Rust, featuring global audio awareness, mini music controls, and AI character chat.
+kirbystudy/chatgpt-desktopPet	90	JavaScript	BSD-2-Clause	2023-04-14T05:32:31Z	2023-09-02T17:31:47Z	0	基于Electron开发 Live2D模型的桌面宠物
+JianguSheng/yuns-desktop-pet	140	JavaScript	MIT	2025-12-20T05:35:29Z	2025-12-24T06:26:42Z	1	🐕 AI桌面宠物助手 - 多模型对话 + MCP工具调用 + 视觉分析 | Electron
+NanmiCoder/cc-haha	14685	TypeScript	MIT	2026-03-31T17:30:14Z	2026-09-23T08:05:37Z	185	Local-first cross-platform desktop workspace for Claude Code / agents: multi-agent, Git worktrees, code diffs, skill marketplace, multi-model, Computer Use, task-aware desktop pets, with WeChat, Feishu, DingTalk, Telegram, WhatsApp and H5 access.
+OpenPetsHQ/openpets	1226	TypeScript	MIT	2026-05-04T19:14:46Z	2026-09-23T10:56:09Z	23	Local first, desktop companion platform with animated pets, plugin SDK and coding-agent integrations.
+rullerzhou-afk/clawd-on-desk	6276	JavaScript	AGPL-3.0	2026-03-18T09:04:20Z	2026-09-23T08:01:13Z	90	A pixel desktop pet that watches Claude Code, Codex, Cursor & other AI coding agents — so you don't have to.
+mykesXD/Desktop-Maid	34	C#	NO-LICENSE	2021-10-13T20:18:47Z	2022-11-07T10:29:30Z	0	tiny anime girl on your desktop?
+guansss/pixi-live2d-display	1506	TypeScript	MIT	2020-03-19T22:33:25Z	2024-08-20T04:41:10Z	53	A PixiJS plugin to display Live2D models of any kind.
+stevenjoezhang/live2d-widget	10968	TypeScript	GPL-3.0	2018-07-11T05:22:00Z	2026-09-21T19:50:26Z	14	把萌萌哒的看板娘抱回家 (ノ≧∇≦)ノ | Live2D widget for web platform
+ntd4996/agentpet	364	Swift	MIT	2026-05-31T09:40:06Z	2026-09-07T10:03:40Z	1	A desktop pet for macOS & Windows that monitors your AI coding agents (Claude Code, Codex, Cursor, Gemini...) in real time, and grows as you code, feed it tokens, level it up, climb the leaderboard.
+funAgent/ai-bubu	28	Vue	MIT	2026-04-03T12:25:51Z	2026-09-21T14:56:57Z	16	A desktop pet that tracks your AI coding activity (Cursor, Claude Code, Codex, Trae) and turns it into steps — the more you code with AI, the faster your pet runs. Built with Tauri + Vue 3. 一个桌面宠物应用，追踪你的 AI 编码工具使用情况（Cursor、Claude Code、Codex、Trae），并将活动量化为步数 ——AI 编码越多，宠物跑得越快。基于 Tauri + Vue 3 构建。
+lars-rooij/webmeji	49	JavaScript	Unlicense	2025-08-04T11:26:01Z	2026-09-16T12:52:44Z	3	a shimeji embedded directly into a website! Everyone that visits your site can now see the little companions walking about.
+Renakoni/chara-desk	50	TypeScript	MIT	2026-06-20T12:38:06Z	2026-08-08T09:52:54Z	2	Claude Code 的桌宠与本地工作台 · A desktop pet & local workbench for Claude Code — 实时动画、权限卡片、Token 看板，兼容 codex-pet / cc-switch ⚓
+PeonPing/peon-pet	102	JavaScript	NO-LICENSE	2026-02-19T02:35:17Z	2026-05-06T20:50:31Z	1	macOS desktop pet for Peon-Ping — an orc that reacts to your Claude Code events with sprite animations.
+			NO-LICENSE				
+			NO-LICENSE				

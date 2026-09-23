@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang='zh-CN'>
+  <head>
+    <meta charset='utf-8' />
+    <meta
+      http-equiv='Content-Security-Policy'
+      content='default-src &#39;self&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;; script-src &#39;self&#39;'
+    />
+    <title>hermes-pet 设置</title>
+    <link rel='stylesheet' href='settings.css' />
+  </head>
+  <body>
+    <div class='panel'>
+      <header class='panel-head'>
+        <h1 class='panel-title'>设置</h1>
+        <button id='close' class='icon-btn' type='button' title='关闭'>×</button>
+      </header>
+
+      <section class='group'>
+        <label class='label' for='nickname'>昵称</label>
+        <input id='nickname' class='field' type='text' maxlength='24' placeholder='怎么称呼你' />
+        <p class='hint'>它开口时会用这个名字叫你。</p>
+      </section>
+
+      <section class='group'>
+        <label class='label' for='size'>显示大小</label>
+        <div class='row'>
+          <input id='size' class='slider' type='range' min='60' max='180' step='4' />
+          <span id='size-value' class='value'>120 px</span>
+        </div>
+        <p class='hint'>改完立刻生效，重启后保持。</p>
+      </section>
+
+      <section class='group'>
+        <label class='toggle'><input id='proactive' type='checkbox' /><span>主动提醒</span></label>
+        <p class='hint'>每天早上问候、连续活跃 40 分钟提醒休息、22:30 数字日落。关掉之后它只在你找它时说话。</p>
+      </section>
+
+      <section class='group'>
+        <label class='toggle'><input id='autolaunch' type='checkbox' /><span>开机自启</span></label>
+      </section>
+
+      <section class='group'>
+        <label class='toggle'><input id='deepnight' type='checkbox' /><span>深夜模式</span></label>
+        <p class='hint'>22:00-07:00 自动降饱和、动作放慢一半；关掉则始终保持白天状态。</p>
+      </section>
+
+      <footer class='panel-foot'>
+        <span id='adapter' class='hint'></span>
+        <button id='reset' class='btn' type='button'>重置位置</button>
+      </footer>
+    </div>
+    <script src='settings.js'></script>
+  </body>
+</html>

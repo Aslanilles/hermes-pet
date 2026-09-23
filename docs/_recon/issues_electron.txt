@@ -1,0 +1,30 @@
+﻿### repo:electron/electron+setIgnoreMouseEvents+transparent (total=33)
+  [open] [Bug]: setIgnoreMouseEvents no longer makes transparent windows click-through on Linux/X11 in Electron 43 :: https://github.com/electron/electron/issues/52456
+  [open] fix: implement setIgnoreMouseEvents on Wayland :: https://github.com/electron/electron/pull/51769
+  [open] setIgnoreMouseEvents for BrowserView :: https://github.com/electron/electron/issues/23863
+  [open] [Bug]: screen.getCursorScreenPoint() not works on linux (a regression from v28.x.x) :: https://github.com/electron/electron/issues/42519
+  [open] Support click-through of transparency :: https://github.com/electron/electron/issues/1335
+  [open] `BrowserWindow` with `setContentProtection(true)` captured on some Windows OSs :: https://github.com/electron/electron/issues/47834
+  [closed] [Wayland] setIgnoreMouseEvents(true) has no effect and screen.getCursorScreenPoint() always returns {x:0, y:0} :: https://github.com/electron/electron/issues/53794
+  [open] Allow clicking through areas of a webContentView :: https://github.com/electron/electron/issues/49039
+### repo:electron/electron+transparent+window+windows+in:title (total=90)
+  [open] [Bug]: setIgnoreMouseEvents no longer makes transparent windows click-through on Linux/X11 in Electron 43 :: https://github.com/electron/electron/issues/52456
+  [closed] fix: transparent windows can be resized on Linux :: https://github.com/electron/electron/pull/52947
+  [closed] fix: transparent windows can be resized on Linux :: https://github.com/electron/electron/pull/52891
+  [closed] fix: transparent windows can be resized on Linux :: https://github.com/electron/electron/pull/52740
+  [closed] fix: prevent borders and smearing in transparent frameless/client frame windows on Linux :: https://github.com/electron/electron/pull/50541
+  [closed] setResizable(true) after setResizable(false) on a transparent frameless window removes transparency on Windows :: https://github.com/electron/electron/issues/51094
+  [closed] fix: user resizable transparent windows on win32 :: https://github.com/electron/electron/pull/50299
+  [closed] fix: user resizable transparent windows on win32 :: https://github.com/electron/electron/pull/50298
+### repo:tauri-apps/tauri+transparent+windows+in:title (total=13)
+  [open] [Bug] Windows 10: transparent always-on-top window sporadically renders transparent areas / desktop wallpaper black (composition race when toggling cursor events or minimizing) :: https://github.com/tauri-apps/tauri/issues/15947
+  [open] [Bug] Linux/Nvidia: Crash (GBM/Error 71) or Visual Artifacts (Ghosting/Black Corners) with Transparent Windows :: https://github.com/tauri-apps/tauri/issues/14924
+  [open] [bug] macOS .transparent(true) Webview Windows Lose Transparency After DMG Build :: https://github.com/tauri-apps/tauri/issues/13415
+  [closed] [bug] White flash occurs on every window.show() when decorations=false and transparent=true on Windows :: https://github.com/tauri-apps/tauri/issues/15490
+  [closed] [bug] [Windows] Ghost titlebar background appears during window drag or focus change on transparent windows "transparent": true :: https://github.com/tauri-apps/tauri/issues/14764
+  [closed] [feat] win11 transparent Windows have shadow Does it support elimination? :: https://github.com/tauri-apps/tauri/issues/14636
+  [closed] [bug] When set `"transparent": true` on Windows 11, the background with the initial size will be white. :: https://github.com/tauri-apps/tauri/issues/10318
+  [closed] [bug] White pixel in transparent windows :: https://github.com/tauri-apps/tauri/issues/8364
+### repo:Adrianotiger/desktopPet+multi-monitor+in:title (total=2)
+  [open] Multi-monitor with different resultions :: https://github.com/Adrianotiger/desktopPet/issues/156
+  [closed] [FEATURE REQUEST] Multi Monitor Support :: https://github.com/Adrianotiger/desktopPet/issues/13

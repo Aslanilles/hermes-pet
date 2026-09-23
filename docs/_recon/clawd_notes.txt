@@ -1,0 +1,43 @@
+﻿### code search: setIgnoreMouseEvents in clawd
+  src/tick.js
+  src/main.js
+  docs/project/theme-state-ui.md
+  src/topmost-runtime.js
+  src/dashboard-quick-mode.js
+  src/pet-window-runtime.js
+  test/topmost-runtime.test.js
+  test/tick.test.js
+  test/dashboard.test.js
+  test/pet-window-runtime.test.js
+  test/edge-virtualization.test.js
+  test/dashboard-quick-mode.test.js
+  test/dashboard-quick-app-quit.test.js
+  test/dashboard-quick-hidden-exit.test.js
+  test/dashboard-quick-renderer.test.js
+  test/dashboard-quick-invalidate-focus.test.js
+### code search: setIgnoreMouseEvents in OpenPets/openpets
+  apps/desktop/src/wayland-layer-backend.ts
+  apps/desktop/src/mouse-forwarding.ts
+  docs/pets.md
+  apps/desktop/src/pet-window-interaction.ts
+  apps/desktop/src/pet-window.ts
+  apps/desktop/src/voice-privacy-indicator-electron.ts
+  apps/desktop/src/plugin-delivery.ts
+  apps/desktop/src/agent-pet-controller.ts
+  apps/desktop/src/default-pet-controller.ts
+  apps/desktop/tests/pet-window-mouse-forwarding-predicate.test.ts
+### clawd README nudge/cooldown lines
+  <img src="assets/hero.gif" alt="Clawd on Desk — a pixel desktop pet that reacts to your AI coding agent in real time. Animated demo: the crab cycles through sleeping, thinking while the model reads the codebase, typing as edit/bash tools run, grooving for one subagent, juggling when multiple subagents run, raising a permission bubble, and celebrating when 14 files / 312 tests are complete. Works with Claude Code, Codex, Cursor, Copilot, Gemini, Antigravity, Qwen, CodeWhale, Pi, OMP, OpenClaw and more.">
+  Thinking when you prompt, typing when tools run, grooving or juggling for subagents, reviewing permissions, celebrating when tasks complete, sleeping when you step away. Ships with three built-in themes: **Clawd** (pixel crab), **Calico** (三花猫), and **Cloudling** (云宝), with full support for custom themes and imported Codex Pet animation packs. An optional official theme, **Hash Sage** (哈希仙人), can be downloaded from Settings → Theme.
+  - **CodeWhale** — optional state-only lifecycle hooks via `~/.codewhale/config.toml` (`[[hooks.hooks]]` entries) (install from Settings → Agents or run `npm run install:codewhale-hooks`); Phase 1 drives idle, thinking, working, sleeping, error, attention, and sweeping animations only, without permission bubbles or subagent tracking
+  - **TraeCode (Trae CN)** — experimental, state-only hook integration via `~/.trae-cn/hooks.json` (install from Settings → Agents or run `npm run install:traecode-hooks`, uninstall with `npm run uninstall:traecode-hooks`). Trae stores the session title server-side, so Clawd derives it from the first prompt line and keeps the first one per session. Hooks must be enabled manually in Trae (**Settings → Hooks → Enable**, run mode: **Sandbox**) — see the [official Trae hooks doc](https://docs.trae.cn/ide/automate-actions-with-hooks). First release is scoped to Trae CN; the international Trae build is not covered. State-only: no permission decisions (stdout is always `{}`) and no `SessionEnd` — closed conversations retire via the desktop idle-timeout cleanup
+  - **12 animated states** — idle, thinking, typing, building, subagent groove, multi-subagent juggling, error, happy, notification, sweeping, carrying, sleeping
+  - **Eye tracking** — Clawd follows your cursor in idle state, with body lean and shadow stretch
+  - **Sleep sequence** — yawning, dozing, collapsing, sleeping after 60s idle; mouse movement triggers a startled wake-up animation
+  - **Click reactions** — double-click for a poke, 4 clicks for a flail
+  - **Mini mode** — drag to right edge or right-click "Mini Mode"; Clawd hides at screen edge with peek-on-hover, mini alerts/celebrations, and parabolic jump transitions
+  - **Allow / deny / agent-native extras** — one-click approve or reject, plus permission rules / `Always` actions when the source agent supports them
+  - **Sessions dashboard + HUD** — right-click or tray → `Open Dashboard` to inspect live sessions, recent events, aliases, and jump to a terminal; a compact HUD near Clawd keeps current live sessions visible
+  - **Private local recap** — `Settings → Recap` (or right-click → `Open Recap`) reviews accepted agent activity by hour/day for today, week, month, or year. It distinguishes unsupported metrics from zero and uncovered time from quiet time, keeps DND activity, stores only minimized local data, and adds no telemetry, export, sharing, token, cost, duration, streak, or productivity score. See the [recap guide](docs/guides/recap.md).
+  - **Startup recovery** — if Clawd restarts while any supported agent is still running, it stays awake instead of falling asleep
+  - **LAN-only + token-gated** — pairing requires a token, tokens rotate automatically with a grace window, and access can be regenerated or reset in one click

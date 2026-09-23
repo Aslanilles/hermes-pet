@@ -1,0 +1,11 @@
+﻿oneko.gif : 256 x 128 px, frames(dimension) = (1/1)
+glreno_1.GIF : 读取失败 使用“1”个参数调用“FromFile”时发生异常:“值不能为 null。
+参数名: path”
+--- cat_sprite.zip 内容 ---
+  catrunx2.gif : 40x34 px
+  catrunx4.gif : 80x68 px
+  catspritesoriginal.gif : 137x50 px
+  catspritesx2.gif : 274x100 px
+  catspritesx4.gif : 548x200 px
+  catwalkx2.gif : 36x30 px
+  catwalkx4.gif : 72x60 px

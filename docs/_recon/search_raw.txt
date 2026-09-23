@@ -1,0 +1,108 @@
+﻿### QUERY: oneko (total=256)
+adryd325/oneko.js | 1320 | JavaScript | MIT | Cat follow mouse real! A script I wrote to put a cat on my site.
+glreno/oneko | 261 | Java | Unlicense | The ever popular kitty-that-follows-your-mouse-pointer
+kyrie25/spicetify-oneko | 171 | JavaScript | MIT | cat follow mouse (real). A fork of oneko.js modified for Spicetify
+tie/oneko | 149 | C | NO-LICENSE | (unofficial) oneko-sakura sources Git mirror
+mdonoughe/neko-mac | 142 | Objective-C | Unlicense | Oneko in Cocoa (Neko for Mac OS X)
+IreneKnapp/oneko | 34 | C | NO-LICENSE | An update of the classic digital kitten.
+hikari-no-yume/oneko-uxn | 30 | C | NO-LICENSE | oneko-uxn  -  uxn 猫. port of oneko-sakura to uxn using chibicc-uxn
+pixelomer/Oneko-iOS | 19 | Objective-C | NO-LICENSE | Port of Oneko for iOS
+### QUERY: desktop+pet+electron (total=409)
+NanmiCoder/cc-haha | 14685 | TypeScript | MIT | Local-first cross-platform desktop workspace for Claude Code / agents: multi-agent, Git worktrees, code diffs, skill marketplace, multi-model, Computer Use, task-aware desktop pets, with WeChat, Feishu, DingTalk, Telegram, WhatsApp and H5 access.
+rullerzhou-afk/clawd-on-desk | 6276 | JavaScript | AGPL-3.0 | A pixel desktop pet that watches Claude Code, Codex, Cursor & other AI coding agents — so you don't have to.
+OpenPetsHQ/openpets | 1226 | TypeScript | MIT | Local first, desktop companion platform with animated pets, plugin SDK and coding-agent integrations.
+YashjitPal/BetterGravity | 210 | JavaScript | NOASSERTION | The extensible power-user platform for Google Antigravity. Adds a native In-App Browser, animated Desktop Pets, revamped Gemini UI, and custom BYOK Gemini Pro keys.
+kk43994/kkclaw | 174 | JavaScript | NOASSERTION | 🦞 一个可爱的桌面龙虾AI助手 - Desktop lobster pet with OpenClaw AI, Edge TTS voice, and emotion animations
+JianguSheng/yuns-desktop-pet | 140 | JavaScript | MIT | 🐕 AI桌面宠物助手 - 多模型对话 + MCP工具调用 + 视觉分析 | Electron
+kirbystudy/chatgpt-desktopPet | 90 | JavaScript | BSD-2-Clause | 基于Electron开发 Live2D模型的桌面宠物
+Renakoni/chara-desk | 50 | TypeScript | MIT | Claude Code 的桌宠与本地工作台 · A desktop pet & local workbench for Claude Code — 实时动画、权限卡片、Token 看板，兼容 codex-pet / cc-switch ⚓
+### QUERY: desktop+pet+tauri (total=207)
+DonkeyKing01/BriefyPet | 46 | Rust | MIT | An AI-powered desktop reading companion that filters RSS sources, summarizes content with LLMs, and reminds you of high-value information.
+ryannli/tiny-roommate | 43 | JavaScript | NO-LICENSE | A tiny AI pet that lives on your desktop. Every AI wants to make you productive — this one just purrs.
+ChanceYu/CoPet | 31 | Rust | MIT | 🐾 A desktop pet that reacts in real time to your AI agents — Claude Code, Codex, Antigravity, OpenCode, Cursor, Copilot, Gemini.
+funAgent/ai-bubu | 28 | Vue | MIT | A desktop pet that tracks your AI coding activity (Cursor, Claude Code, Codex, Trae) and turns it into steps — the more you code with AI, the faster your pet runs. Built with Tauri + Vue 3. 一个桌面宠物应用，追踪你的 AI 编码工具使用情况（Cursor、Claude Code、Codex、Trae），并将活动量化为步数 ——AI 编码越多，宠物跑得越快。基于 Tauri + Vue 3 构建。
+siegerts/tama96 | 26 | Rust | NO-LICENSE | A virtual pet for your desktop, terminal, or AI agent. Inspired by the 1996 original Tamagotchi. Your care choices shape who your pet becomes.
+YuFu-Onship/FumoAgent | 18 | Go | NO-LICENSE | FumoAgent is a desktop pet / kanban girl application developed using the Gio UI and Tauri frameworks. The project aims to create a lightweight desktop companion with a clean interface, minimal resource consumption, and rich localized voice customization features.
+nucket/NekoAI | 17 | TypeScript | MIT | 🐱 AI-powered desktop pet inspired by the classic Neko. Roams your screen, reacts to your windows, and chats with you via Gemini, Claude, OpenAI, nVidia NIM or Ollama. Built with Tauri + Rust. 
+IMMINJU/claude-pet | 13 | JavaScript | MIT | A lightweight desktop pet that reacts to Claude Code in real time
+### QUERY: live2d+desktop+pet (total=142)
+DasterProkio/awesome-ai-companion | 729 | HTML | CC0-1.0 | Open-source AI companions, desktop pets, long-term memory & proactive chat. 人机恋开源项目大全。让你的家机能够脱离官端自主存在，拥有记忆和主动性。
+momori777/Artemis | 352 | Python | NOASSERTION | 破限本地AI女友后宫，Agent+画图语音向量数据库+live2D+桌宠+酒馆角色卡导入+webchat，QQ+Telegram双通道，8G显存可跑 uncensored Fully offline AI girlfriends harem Openclaw/Claude code+Local LLM+GPT-SoVITS+ComfyUI image+Live2D+desktop pet+SilllyTavern Character card import+frontend |  QQ & Telegram | Dynamic 8G VRAM scheduling+mem0 qdrant, can run offline
+DD-MASTERT/AI-Girlfriend-Desktop-Pet | 237 | Python | MIT | AI桌宠2.2（网页端toklen白嫖国产大模型服务器（glm4，kimi，deepseekv2），语音识别，屏幕识别自动发送，live2d 2.0和3.0模型，gpt-sovits语音，coysvoice语音，edge-tts语音（支持多语言音色），本地ollama模型无限制聊天）（主流国产大模型api接口支持）
+kiyotakali/Miru | 161 | Python | Apache-2.0 | An open-source AI companion that actually remembers you — runs entirely on your own Mac or server. Desktop pet · long-term memory · proactive companionship · multi-device sync.
+liwenka1/bongo-cat-next | 148 | TypeScript | MIT | 🐱 A modern desktop pet app with cute Live2D cats | 现代化桌面宠物应用，可爱Live2D猫咪陪伴编程
+funnycups/petto | 119 | Dart | GPL-3.0 | An intelligent Live2D desktop assistant
+kirbystudy/chatgpt-desktopPet | 90 | JavaScript | BSD-2-Clause | 基于Electron开发 Live2D模型的桌面宠物
+x380kkm/Live2DPet | 87 | JavaScript | MIT | AI-powered Live2D desktop pet companion with VOICEVOX TTS
+### QUERY: ai+desktop+pet (total=844)
+NanmiCoder/cc-haha | 14685 | TypeScript | MIT | Local-first cross-platform desktop workspace for Claude Code / agents: multi-agent, Git worktrees, code diffs, skill marketplace, multi-model, Computer Use, task-aware desktop pets, with WeChat, Feishu, DingTalk, Telegram, WhatsApp and H5 access.
+rullerzhou-afk/clawd-on-desk | 6276 | JavaScript | AGPL-3.0 | A pixel desktop pet that watches Claude Code, Codex, Cursor & other AI coding agents — so you don't have to.
+SlimeBoyOwO/LingChat | 2246 | Rust | AGPL-3.0 | Immersive AI-driven Galgame chat with emotional expressions, desktop pet, scheduling, and interactive story modules. / 一款沉浸式 AI-Galgame 聊天软件，附带桌宠，日程，剧情功能
+DasterProkio/awesome-ai-companion | 729 | HTML | CC0-1.0 | Open-source AI companions, desktop pets, long-term memory & proactive chat. 人机恋开源项目大全。让你的家机能够脱离官端自主存在，拥有记忆和主动性。
+Zao-chen/ZcChat | 564 | C++ | GPL-3.0 | 一个模仿Galgame效果的AI桌宠 | An AI desktop pet that mimics the effects of a Galgame
+ntd4996/agentpet | 364 | Swift | MIT | A desktop pet for macOS & Windows that monitors your AI coding agents (Claude Code, Codex, Cursor, Gemini...) in real time, and grows as you code, feed it tokens, level it up, climb the leaderboard.
+momori777/Artemis | 352 | Python | NOASSERTION | 破限本地AI女友后宫，Agent+画图语音向量数据库+live2D+桌宠+酒馆角色卡导入+webchat，QQ+Telegram双通道，8G显存可跑 uncensored Fully offline AI girlfriends harem Openclaw/Claude code+Local LLM+GPT-SoVITS+ComfyUI image+Live2D+desktop pet+SilllyTavern Character card import+frontend |  QQ & Telegram | Dynamic 8G VRAM scheduling+mem0 qdrant, can run offline
+rainnoon/oc-claw | 351 | Rust | NOASSERTION | A desktop pet that monitors your AI coding agents (OpenClaw, Claude Code, Codex, Cursor, Gemini CLI, opencode, Hermes) in real time. OC = OpenClaw. OC = Original Character. Make it yours.
+### QUERY: bongocat (total=413)
+ayangweb/BongoCat | 23549 | Vue | MIT | 🐱跨平台互动桌宠 BongoCat，为桌面增添乐趣！
+vladelaina/BongoCat | 2492 | C | AGPL-3.0 | 🩷 💘C × SDL3 × OpenGL — Three Mysterious Forces, United as One! Bong~ Bongocat!!!Don't be shy, Join Here🧸: https://discord.gg/vf8jqnattk
+kuroni/bongocat-osu | 2463 | C++ | MIT | An osu! Bongo Cat overlay
+ayangweb/Awesome-BongoCat | 2049 |  | NO-LICENSE | 🚀 汇聚优质的第三方 BongoCat 模型！
+saatvik333/wayland-bongocat | 478 | C | MIT | bongocat for your desktop ₍^. .^₎
+pedker/OLED-BongoCat-Revision | 188 | C | NO-LICENSE | (no desc)
+Gamma-Software/BongoCat-mac | 68 | Swift | MIT | Free BongoCat Overlay for macOS
+kitgore/BongoCat | 67 | TypeScript | MIT | (no desc)
+### QUERY: desktop+mascot (total=356)
+MidraLab/uDesktopMascot | 353 | C# | Apache-2.0 | desktop mascot open project
+mattn/gopher | 282 | Go | NO-LICENSE | Windows Desktop Mascot Applicaiton "Gopher"
+not-elm/desktop-homunculus | 84 | Rust | Apache-2.0 | Desktop mascot built with bevy
+mityu/yoMMD | 47 | C++ | NOASSERTION | Desktop mascot software powered by MMD for Windows and macOS
+Kritzkingvoid/JukeBox | 39 | C# | NO-LICENSE | A desktop jukebox mascot app built with C# (WPF), Mostly related to Umamusume, but can be edited through the spritesheet. Perfect for having a little dancing gremlin to waste your time while procrastinating.
+Lumina403/LUMINA-AI | 35 | C++ | GPL-3.0 | A local-first AI desktop companion that can chat, remember, interact with your desktop, and perform autonomous actions through an animated mascot interface.
+TCPHijinks/Desktop-Mascot | 26 | C# | MIT | Get your own Anime Desktop Mascot! Easy to customise with a lot more features coming in the future.
+weltern/Clawdmeter | 25 | Python | MIT | Cross-platform desktop dashboard for Claude Code usage — Windows, macOS & Linux. Live session & weekly limits with reset countdowns, token counts, and one reactive Clawd mascot per active session. Plus a Stats page valuing your local transcripts against API rates, 16 themes and a custom theme editor. Lives in your tray.
+### QUERY: runcat (total=187)
+runcat-dev/RunCat365 | 10312 | C# | Apache-2.0 | A cute running cat animation on your windows taskbar.
+runcat-dev/RunCatNeo | 872 | Swift | Apache-2.0 | A cute running cat animation on your macOS menubar.
+win0err/gnome-runcat | 552 | TypeScript | GPL-3.0 | 😼 The cat tells you the CPU usage by running speed
+Kyome22/menubar_runcat | 511 | Swift | Apache-2.0 | A cute Running Cat animation on your MacBook menubar.
+wangrongding/wallpaper-box | 431 | TypeScript | GPL-3.0 | 🏞️ 让桌面活起来：静态、视频、网页、自定义html、3D、AI 壁纸，且支持通过Bilibili，YouTube链接直接下载在线视频设为壁纸，并集成了会随着 CPU 使用率变化速度的 RunCat 托盘动画。(A desktop wallpaper client to set static / dynamic wallpapers, integrated with RunCat's features.)
+shenbo/runcat-pyqt5-win | 71 | Python | MIT | 在 Windows 任务栏养猫
+zzqmt/polycat | 57 | C++ | MIT | runcat module for polybar (or waybar) written in C++
+chux0519/runcat-tray | 54 | C | BSD-2-Clause | runcat system tray on Linux (using libappindicator)
+### QUERY: desktop+pet (total=6815)
+NanmiCoder/cc-haha | 14685 | TypeScript | MIT | Local-first cross-platform desktop workspace for Claude Code / agents: multi-agent, Git worktrees, code diffs, skill marketplace, multi-model, Computer Use, task-aware desktop pets, with WeChat, Feishu, DingTalk, Telegram, WhatsApp and H5 access.
+rullerzhou-afk/clawd-on-desk | 6276 | JavaScript | AGPL-3.0 | A pixel desktop pet that watches Claude Code, Codex, Cursor & other AI coding agents — so you don't have to.
+shinyflvre/Mate-Engine | 3694 | ShaderLab | NOASSERTION | A free Desktop Mate alternative with a lightweight interface and custom VRM support, though with more features.
+SlimeBoyOwO/LingChat | 2246 | Rust | AGPL-3.0 | Immersive AI-driven Galgame chat with emotional expressions, desktop pet, scheduling, and interactive story modules. / 一款沉浸式 AI-Galgame 聊天软件，附带桌宠，日程，剧情功能
+OpenPetsHQ/openpets | 1226 | TypeScript | MIT | Local first, desktop companion platform with animated pets, plugin SDK and coding-agent integrations.
+Adrianotiger/desktopPet | 1150 | C# | NO-LICENSE | Remembering the lovely eSheep (stray sheep) from 1995 - 
+isHarryh/Ark-Pets | 1099 | Java | GPL-3.0 | Arknights Desktop Pets | 明日方舟桌宠 (ArkPets)
+ChaozhongLiu/DyberPet | 982 | Python | GPL-3.0 | Desktop Cyber Pet Framework based on PySide6
+### QUERY: vtuber+llm (total=164)
+Open-LLM-VTuber/Open-LLM-VTuber | 13888 | Python | NOASSERTION | Talk to any LLM with hands-free voice interaction, voice interruption, and Live2D avatar running locally across platforms
+elevenyellow/handcrafted-persona-engine | 1371 | C# | NO-LICENSE | An AI-powered interactive avatar engine using Live2D, LLM, ASR, TTS, and RVC. Ideal for VTubing, streaming, and virtual assistant applications.
+AkagawaTsurunaki/ZerolanLiveRobot | 805 | Python | MIT | AI VTuber with LLM, ASR, TTS, OCR, CV and more technologies to live stream or play Minecraft with you.
+TheDeathDragon/LiveTranslate | 691 | Python | MIT | Real-time audio translation, captures system audio + mic, runs ASR (Whisper/SenseVoice),   translates via LLM API with streaming display. Perfect for VTubers, livestreamers, and watching foreign content. Windows 实时音频翻译，ASR 语音识别后 LLM 流式翻译显示，适合 VTuber、主播和外语视频观看。
+v3ucn/live2d-TTS-LLM-GPT-SoVITS-Vtuber | 283 | HTML | NO-LICENSE | 低成本的简单基于live2d TTS文字转语音和大模型聊天的直播解决方案
+MIO-456/Lumi_Nox | 231 | Python | MIT | Two AI VTubers co-hosting one live show — the realtime engine & orchestration. Open-core, battle-tested by a daily stream.
+Open-LLM-VTuber/Open-LLM-VTuber-Web | 180 | TypeScript | NOASSERTION | The Web/Electron frontend for Open-LLM-VTuber Project
+Pal-AI-Lab/Cortico | 136 | TypeScript | MIT | Event-stream AI Agent framework for building your persona bot 🍊
+### QUERY: desktop+companion+ai (total=1179)
+fathah/hermes-desktop | 14286 | TypeScript | MIT | Desktop Companion for Hermes Agent
+morettt/my-neuro | 1376 | JavaScript | MIT | This project lets you create your own AI desktop companion with customizable characters and voice conversations that respond in just 1 second. Features include long-term memory, visual recognition, voice cloning and LLM training. Compatible with various Live2D customizations.
+jofizcd/Soul-of-Waifu | 1340 | Python | GPL-3.0 | 🌌 Give a soul to your favorite characters. Soul of Waifu is a desktop roleplay & AI companion app featuring Live2D/VRM avatars, voice chat & local LLM. Evolve together across immersive chat, RPG adventures, and your desktop.
+wangxijie001/yoji | 887 | TypeScript | MIT | 有情绪的 AI 桌面伴侣 | 隐私优先 · 语音唤醒 · 协助办公 · MCP 无限扩展 | An AI desktop companion with emotions — privacy-first, voice wake, office assistance, and MCP extensibility
+DasterProkio/awesome-ai-companion | 729 | HTML | CC0-1.0 | Open-source AI companions, desktop pets, long-term memory & proactive chat. 人机恋开源项目大全。让你的家机能够脱离官端自主存在，拥有记忆和主动性。
+JasonLiu0826/ackem | 550 | TypeScript | NOASSERTION | Ackem — 本地优先 AI 桌面陪伴 · Local-first AI desktop companion. 隐私数据不上传，支持记忆/情绪/扩展/ 。AGPL-3.0
+yanhanruan/Mutsumi | 238 | Rust | NO-LICENSE | Mutsumi (睦) : Lightweight AI desktop companion built with Tauri 2 and Rust, featuring global audio awareness, mini music controls, and AI character chat.
+mo-tunn/OpenGuider | 169 | JavaScript | Apache-2.0 | An AI companion that lives on your desktop - OpenGuider watches your screen, listens to your voice, and guides every step with clear actions.
+### QUERY: sprite+desktop+pet (total=95)
+PeonPing/peon-pet | 102 | JavaScript | NO-LICENSE | macOS desktop pet for Peon-Ping — an orc that reacts to your Claude Code events with sprite animations.
+shiyubao78/token-sprite | 26 | JavaScript | NOASSERTION | 🌱 烧的是 token，长的是脑子｜Burning tokens, growing neurons. 用 Claude Code / Codex 的真实用量养大一只桌面小精灵，并用你本机的 AI 复盘每天学到了什么——不只是写代码，写 PRD、做 demo 也算。全本地不上传。| A desktop pet fed by your real AI-tool usage, plus a daily journal of what you actually learned. Fully local.
+xiangking/agent-pet | 21 | Rust | MIT | Agent Pet is a lightweight desktop companion for AI tools and agent activity. It supports Codex-compatible sprite sheets, live monitoring for Codex/Claude/opencode/OpenClaw/Hermes, and local WebSocket-driven animations.
+Denellyne/DPets | 6 | C++ | MIT | Pets for your desktop (Windows & Linux)
+lemmoaeen/Stefanie-Desktop-Pet | 5 | C# | NO-LICENSE | A Windows singer desktop pet with sprite animation, lyric bubbles, and local album playback.
+Mathieu-bot/petdex-linux | 5 | JavaScript | NO-LICENSE | A floating desktop pet companion for Linux — animated sprite that reacts to your desktop activity
+Liuyingandying/codex-firefly-pet | 4 |  | NO-LICENSE | Unofficial fan-made Firefly desktop pet for Codex, featuring a validated v2 sprite sheet, nine task-state animations, and 16 look directions.
+zealot00/dsh-pet | 3 | JavaScript | NO-LICENSE | Desktop pet for DeepSeek Harness Web UI: sprite animation, agent state linkage, drag, alarm & pomodoro widgets, skin separation

@@ -1,0 +1,41 @@
+﻿### clawd src/topmost-runtime.js 头部注释
+  "use strict";
+  
+  const {
+    applyStationaryCollectionBehavior: defaultApplyStationaryCollectionBehavior,
+    deDelegateWindowFromStationarySpace: defaultDeDelegateWindowFromStationarySpace,
+  } = require("./mac-window");
+  const { animateWindowOpacity } = require("./window-opacity-transition");
+  
+  const WIN_TOPMOST_LEVEL = "pop-up-menu";  // above taskbar-level UI
+  const MAC_TOPMOST_LEVEL = "screen-saver"; // above fullscreen apps on macOS
+  const TOPMOST_WATCHDOG_MS = 5_000;
+  // #562: the hit window's activation (focusable) tracks the fullscreen state on
+  // its own fast timer, separate from the 5s topmost watchdog. Entering a
+  // fullscreen game has to flip the hit window non-activating quickly — while it
+  // still activates, an early click/drag can kick the game out of fullscreen — so
+  // this polls ~1s instead of riding the slow watchdog (which left a ~5s window).
+  const FOCUSABLE_POLL_MS = 1_000;
+  // #935: how many non-fullscreen focusable-poll ticks an armed manual-show
+  // override waits for a fullscreen app to bind to before it decays (see
+  // noteFullscreenAutoHideOverride). Sized to outlast a tray-menu round trip —
+  // menu open, read, click, refocus the game — while staying far below the gap
+  // between two distinct fullscreen sessions.
+  const FSAUTOHIDE_OVERRIDE_GRACE_TICKS = 15;
+  // When the native probe can only report a fullscreen verdict (plain `true`)
+  // and not an HWND identity, a manual-show override cannot distinguish the
+  // original app from the next one. Two consecutive non-fullscreen observations
+### BongoCat issue 857 正文前 12 行
+  title: Black screen in OBS / Streamlabs when capturing BongoCat (transparent window issue)
+  ### 描述 Bug
+  
+  Hello,
+  
+  I am experiencing an issue when trying to capture BongoCat in OBS Studio and Streamlabs Desktop.
+  
+  Problem:
+  
+  When I add BongoCat using Window Capture, the preview appears completely black in OBS.
+  
+  If I change the capture method (Automatic / Windows 10 1903 / etc.), the preview either stays black or becomes fully transparent.
+  

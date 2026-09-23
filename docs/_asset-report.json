@@ -1,0 +1,26 @@
+{
+  "oneko.gif": {
+    "file": "oneko.gif",
+    "sheet_size": [
+      256,
+      128
+    ],
+    "frame_size": [
+      256,
+      128
+    ],
+    "frame_count": 1,
+    "durations_ms": [
+      0
+    ],
+    "note": "frame_size 即单帧尺寸；帧按 GIF 逐帧播放，可用 canvas drawImage 按索引取帧"
+  },
+  "generated": [
+    "icon-128.png",
+    "icon-256.png",
+    "icon-32.png",
+    "icon-64.png",
+    "icon-night.png",
+    "tray.png"
+  ]
+}

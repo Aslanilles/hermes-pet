@@ -54,3 +54,19 @@ secrets.*
 # Hermes Pet
 sprites/*.png
 sprites/*.gif
+
+# --- hermes-pet M0 (Electron) ---
+# Node / Electron：唯一依赖 electron，装在 node_modules，不入库
+node_modules/
+npm-debug.log*
+yarn-error.log*
+*.log
+
+# 运行时临时产物（配置与状态存 userData，不落项目目录）
+*.tmp
+HANDOFF-*.tmp
+
+# 反向上面的 `data/` 规则：M0 精灵素材必须随仓库交付（应用启动即依赖它）
+!data/
+!data/sprites/
+!data/sprites/**

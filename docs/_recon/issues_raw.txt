@@ -1,0 +1,36 @@
+﻿### repo:ayangweb/BongoCat+transparent+windows (total=1)
+  [open] Black screen in OBS / Streamlabs when capturing BongoCat (transparent window issue) :: https://github.com/ayangweb/BongoCat/issues/857
+### repo:ayangweb/BongoCat+click+through (total=0)
+### repo:rullerzhou-afk/clawd-on-desk+click-through (total=79)
+  [open] fix(codex-pet): give juggling a pose of its own instead of reusing the working file :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/1022
+  [open] Linux AppImage: Claude Code hooks point to the transient /tmp/.mount_* path and break once Clawd exits :: https://github.com/rullerzhou-afk/clawd-on-desk/issues/1027
+  [open] refactor(settings): unify form field controls :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/968
+  [open] [Feature Request] Single-Window Mode for Tiling Wayland Compositors :: https://github.com/rullerzhou-afk/clawd-on-desk/issues/752
+  [open] fix(linux): keep the pet visible on all workspaces :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/980
+  [closed] fix(focus): safely raise Cursor and Code without project titles :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/1008
+### repo:rullerzhou-afk/clawd-on-desk+multi-monitor (total=21)
+  [open] fix: restore window position when disconnected display is reconnected :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/118
+  [closed] feat(win): auto-hide pet and surfaces in fullscreen :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/973
+  [closed] feat(win): opt-in auto-hide of the pet while a fullscreen app is foreground :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/942
+  [closed] fix(remote-ssh): serialize Codespaces SSH transport :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/845
+  [closed] fix: keep mini restore on snapped display :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/547
+  [closed] Fix Windows startup recovery followups :: https://github.com/rullerzhou-afk/clawd-on-desk/pull/560
+### repo:pixelomer/Shijima-Qt+windows+transparent (total=4)
+  [open] Option to run all shimeji as a single fullscreen window :: https://github.com/pixelomer/Shijima-Qt/issues/17
+  [open] Make the Shijimas clickthrough? :: https://github.com/pixelomer/Shijima-Qt/issues/12
+  [open] Weird grab behaviour :: https://github.com/pixelomer/Shijima-Qt/issues/45
+  [open] Native Wayland support :: https://github.com/pixelomer/Shijima-Qt/issues/43
+### repo:ChaozhongLiu/DyberPet+windows+transparent (total=0)
+### repo:isHarryh/Ark-Pets+windows+display (total=0)
+### repo:Adrianotiger/desktopPet+windows+11 (total=6)
+  [closed] [FEATURE REQUEST] - Online Editor :: https://github.com/Adrianotiger/desktopPet/issues/11
+  [open] 1.3.1 does not launch on Windows 11 :: https://github.com/Adrianotiger/desktopPet/issues/136
+  [open] Multi-monitor with different resultions :: https://github.com/Adrianotiger/desktopPet/issues/156
+  [open] Request Mikan-Seijin :: https://github.com/Adrianotiger/desktopPet/issues/33
+  [open] Stray Sheep - No sound :: https://github.com/Adrianotiger/desktopPet/issues/142
+  [open] error messages :: https://github.com/Adrianotiger/desktopPet/issues/124
+### repo:shinyflvre/Mate-Engine+multi-monitor (total=2)
+  [open] feat: add macOS support :: https://github.com/shinyflvre/Mate-Engine/pull/551
+  [closed] [FEATURE] :: https://github.com/shinyflvre/Mate-Engine/issues/414
+### repo:kirbystudy/chatgpt-desktopPet+windows (total=1)
+  [closed] 目前存在几个bug,无法发送chat，设置无法关闭 :: https://github.com/kirbystudy/chatgpt-desktopPet/issues/2

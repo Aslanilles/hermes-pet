@@ -1,0 +1,165 @@
+﻿### clawd src/pet-window-runtime.js (setIgnoreMouseEvents 上下文)
+  L8: isPointInAnyWorkArea,
+  L122: const getPrimaryWorkAreaSafe = options.getPrimaryWorkAreaSafe || (() => null);
+  L123: const getNearestWorkArea = options.getNearestWorkArea || (() => getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA);
+  L180: const isNearWorkAreaEdge = options.isNearWorkAreaEdge || (() => false);
+  L247: //   workArea: the workArea materialized against (was lastResolvedWorkArea)
+  L254: //     off, outer workArea edge) where an X clamp could have explained a
+  L301: // external move that happens to land on a workArea edge (a one-off event,
+  L318: let lastHitWorkArea = null;
+  L320: // resolveClampAwareBounds(lastHitWorkArea)'s result AT THE MOMENT
+  L361: function getPrimaryWorkAreaFallback() {
+  L362: return getPrimaryWorkAreaSafe() || SYNTHETIC_WORK_AREA;
+  L366: // around screen.getAllDisplays(). Every internal caller here
+  L368: // getAttachedMiniWorkArea-equivalent lookups, etc.) used to trigger a
+  L392: cachedDisplays = typeof screen.getAllDisplays === "function" ? screen.getAllDisplays() : [];
+  L398: return typeof screen.getCursorScreenPoint === "function"
+  L399: ? screen.getCursorScreenPoint()
+  L406: if (typeof screen.getDisplayNearestPoint === "function") {
+  L407: return screen.getDisplayNearestPoint(point) || null;
+  L415: return typeof screen.getPrimaryDisplay === "function"
+  L416: ? (screen.getPrimaryDisplay() || null)
+  L425: if (!display || !display.bounds || !display.workArea) {
+  L441: return display && isValidWorkArea(display.bounds) ? display.bounds : null;
+  L446: return display && isValidWorkArea(display.bounds) ? display.bounds : null;
+  L452: if (!display || !isValidWorkArea(display.bounds)) return display;
+  L453: return { ...display, workArea: display.bounds };
+  L459: return displays.every((display) => display && isValidWorkArea(display.bounds));
+  L473: (display) => display && isValidWorkArea(display.workArea)
+  L561: function resolveWorkAreaFor(bounds) {
+  L563: ? getNearestWorkArea(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)
+  L571: function resolveEdgeContextForBounds(bounds, workArea) {
+  L572: if (!bounds || !isValidWorkArea(workArea)) return null;
+  L575: workArea,
+  L582: // lookup, so this is a small local equivalent: whichever display's workArea
+  L588: if (!d || !d.workArea) continue;
+  L589: const wa = d.workArea;
+  L620: // be a one-off external move that merely happens to land on a workArea
+  L706: function resolveHorizontalClampBounds(bounds, workArea, providedEdgeContext) {
+  L708: const edge = providedEdgeContext || resolveEdgeContextForBounds(bounds, workArea);
+  L710: const displayId = isValidWorkArea(workArea)
+  L711: ? findDisplayIdForPoint(workArea.x + workArea.width / 2, workArea.y + workArea.height / 2)
+  L714: leftBound: edge.left.isOuterWorkAreaEdge
+  L715: ? edge.left.workAreaBoundary + getObservedClampInset(displayId, "left")
+  L717: rightBound: edge.right.isOuterWorkAreaEdge
+  L718: ? edge.right.workAreaBoundary - getObservedClampInset(displayId, "right")
+  L729: function resolveMaterializationWorkArea(bounds, workArea, opts = {}) {
+  L730: const requestedWorkArea = isValidWorkArea(workArea)
+  L731: ? workArea
+  L732: : resolveWorkAreaFor(bounds);
+  L736: if (!isMac || !allowEdgePinning || getMiniMode()) return requestedWorkArea;
+  L738: const probeArea = isValidWorkArea(workArea) ? workArea : null;
+  L745: return getNearestDisplayPhysicalBounds(probeX, probeY) || requestedWorkArea;
+  L748: function materializeVirtualBounds(bounds, workArea, opts = {}) {
+  L750: const resolvedWorkArea = resolveMaterializationWorkArea(bounds, workArea, opts);
+  L751: const clampBounds = resolveHorizontalClampBounds(bounds, resolvedWorkArea, opts.edgeContext);
+  L752: const raw = materializeVirtualBoundsRaw(bounds, resolvedWorkArea, clampBounds);
+  L754: // PR #751 Codex review #2 (rework batch A-2): surface the workArea and
+  L759: return { ...raw, workArea: resolvedWorkArea, clampBounds };
+  L1072: ? deriveClampObservation(actual, expected, expectedWrite.workArea, expectedWrite.clampBounds)
+  L1165: // the raw workArea) and equals wa.right EXACTLY whenever a clamp was
+  L1180: // `?? (wa.x + wa.width)` / `?? wa.x` raw-workArea fallback for a null
+  L1187: // topologically able to clamp anything. Falling back to the raw workArea
+  L1199: if (!actual || !expected || !isValidWorkArea(wa)) return null;
+  L1214: // The learned inset itself is always relative to the RAW workArea
+  L1231: // given workArea (i.e. resolveHorizontalClampBounds() without needing a
+  L1239: if (!isValidWorkArea(wa)) return { leftBound: null, rightBound: null };
+  L1255: //  - workArea / edgeContext: let a caller that already resolved these
+  L1257: //    In normal macOS mode with edge pinning enabled, workArea is only a
+  L1268: const m = materializeVirtualBounds(next, opts.workArea, opts);
+  L1284: workArea: m.workArea,
+  L1543: // setAlwaysOnTop both windows on a path where native calls are failing.
+  L1608: const workArea = getPrimaryWorkAreaFallback();
+  L1609: const size = getEffectiveCurrentPixelSize(workArea);
+  L1611: x: Math.round(workArea.x + (workArea.width - size.width) / 2),
+  L1612: y: Math.round(workArea.y + (workArea.height - size.height) / 2),
+  L1677: // #241: macOS workArea excludes the Dock/menu bar. Edge pinning is visual,
+  L1693: ? (physicalPrimaryBounds || getPrimaryWorkAreaSafe())
+  L1694: : getPrimaryWorkAreaSafe(),
+  L1709: function isValidWorkArea(wa) {
+  L1726: const forcedWorkArea = isValidWorkArea(optionsArg.workArea)
+  L1727: ? optionsArg.workArea
+  L1729: const nearestWorkArea = forcedWorkArea || getNearestWorkArea(x + w / 2, y + h / 2);
+  L1730: const insetProbeX = forcedWorkArea
+  L1731: ? nearestWorkArea.x + nearestWorkArea.width / 2
+  L1733: const insetProbeY = forcedWorkArea
+  L1734: ? nearestWorkArea.y + nearestWorkArea.height / 2
+  L1744: const clampArea = physicalBounds || nearestWorkArea;
+  L1827: // constraint as render — a rect that pokes past the target workArea just
+  L1832: // never intersect against workArea here, preserving existing edge-pinning
+  L1841: // clipped BOTH sides unconditionally against the raw workArea width
+  L1844: // display's width — Y (top/bottom vs workArea) is unaffected, unchanged.
+  L1845: function intersectHitWithWorkArea(hit, workArea, clampBounds) {
+  L1846: if (!hit || !isValidWorkArea(workArea)) return hit;
+  L1852: const top = Math.max(hit.top, workArea.y);
+  L1853: const bottom = Math.min(hit.bottom, workArea.y + workArea.height);
+  L1871: if (!isLiveWindow(hitWin) || typeof hitWin.setIgnoreMouseEvents !== "function") return;
+  L1875: hitWin.setIgnoreMouseEvents(ignore);
+  L1881: // hitWin.setIgnoreMouseEvents() directly (I5's single-writer requirement).
+  L1925: const hitWa = resolveWorkAreaFor(bounds);
+  L1927: // revert hit to pre-#690 behavior entirely — no workArea intersection,
+  L1934: hit = intersectHitWithWorkArea(hit, hitWa, clampBounds);
+  L1947: // of the workArea intersection just skipped above).
+  L1977: // PR #751 second-review C-3 (Codex B3): lastHitWorkArea/lastHitClampBounds
+  L1989: lastHitWorkArea = hitWa;
+  L2098: actual, lastRequestedHitRect, lastHitWorkArea, lastHitClampBounds
+  L2239: if (isWin) renderWin.setAlwaysOnTop(true, topmostLevel);
+  L2338: if (isWin) hitWin.setAlwaysOnTop(true, topmostLevel);
+  L2429: if (isWin && isNearWorkAreaEdge(bounds)) reassertWinTopmost();
+  L2449: const workArea = getPrimaryWorkAreaFallback();
+  L2451: x: workArea.x + workArea.width - size.width - 20,
+  L2452: y: workArea.y + workArea.height - size.height - 20,
+  L2463: const savedCenterVisible = isPointInAnyWorkArea(
+  L2501: && typeof settingsWindow.setAlwaysOnTop === "function"
+  L2503: settingsWindow.setAlwaysOnTop(true, topmostLevel);
+  L2507: // hitWin.setIgnoreMouseEvents() directly.
+  L2525: && typeof settingsWindow.setAlwaysOnTop === "function"
+  L2527: settingsWindow.setAlwaysOnTop(false);
+  L2532: if (isLiveWindow(hitWin) && typeof hitWin.setAlwaysOnTop === "function") {
+  L2533: hitWin.setAlwaysOnTop(true, topmostLevel);
+  L2551: // Only mini transitions defer topology changes: mini caches its workArea
+  L2584: // workArea/seam data once the transition settled. Hand it to mini.js
+### openpets apps/desktop/src/mouse-forwarding.ts 摘要
+  /**
+   * Pure, dependency-free mouse-forwarding decision logic.
+   *
+   * This logic is extracted out of `pet-window.ts` (which imports Electron and so
+   * cannot be loaded by the plain-Node `node:test` runner) so the exact production
+   * predicates can be unit-tested directly instead of through a hand-rolled copy.
+   * `pet-window.ts` reads the live platform and delegates here, guaranteeing the
+   * tests and production never drift.
+   */
+  
+  /**
+   * Whether a click-through pet window can still receive *forwarded* mouse events
+   * (`setIgnoreMouseEvents(true, { forward: true })`).
+   *
+   * On Linux, Electron does not forward mouse events to ignored windows at all, so
+   * pet windows there are kept interactive instead (see `setPassthrough`).
+   */
+  export function canForwardMouseEvents(platform: NodeJS.Platform | string): boolean {
+    return platform === "darwin" || platform === "win32";
+  }
+  
+  /**
+   * Whether the cursor-probe watchdog should run for a click-through pet window.
+   *
+   * Forwarded mouse events are the *only* way a click-through pet learns that the
+   * cursor is over it, and the compositor can silently stop delivering them:
+   *   - Windows: Chromium's forwarded mouse tracking goes stale after rapid pet
+   *     HTML reloads and fullscreen sweeps.
+   *   - macOS: the WindowServer stops delivering forwarded moves after Space
+   *     switches, display sleep, and fullscreen transitions.
+### Mate-Engine LICENSE.md head
+  ## MateEngine Pro License (v2.1)
+  
+  **Copyright © 2025 Johnson Jason**
+  
+  This license governs the use, modification, and distribution of the MateEngine software and any derivative works. By using this software, you agree to the following terms:
+  
+  ### 1. Grant of Use and Modification
+  
+  You may use, study, and modify the MateEngine source code privately.
+  You may not distribute, publish, or make any modified or unmodified version of MateEngine publicly available except as explicitly allowed below.
+  
+  ### 2. Source Code Disclosure Requirement (Copyleft)

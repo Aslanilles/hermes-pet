@@ -1,0 +1,767 @@
+'use strict';
+
+/**
+ * hermes-pet 主进程：窗口 / 托盘 / 菜单 / 单实例 / 调度器接线 / 持久化 / --smoke-test。
+ * 技术约束：CommonJS、无构建步骤、除 electron 外零依赖。
+ */
+
+const path = require('path');
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen } = require('electron');
+
+const configStore = require('./core/config');
+const scheduler = require('./core/scheduler');
+const replies = require('./core/replies');
+const { createReplyService } = require('./adapters');
+
+const SMOKE_TEST = process.argv.indexOf('--smoke-test') >= 0;
+const SELF_CHECK = process.argv.indexOf('--self-check') >= 0;
+const SMOKE_WAIT_MS = 6000;
+
+const PROJECT_ROOT = path.join(__dirname, '..');
+const ENV_PATH = path.join(PROJECT_ROOT, '.env');
+const SPRITE_DIR = path.join(PROJECT_ROOT, 'data', 'sprites');
+const RENDERER_DIR = path.join(__dirname, 'renderer');
+
+const EDGE_MARGIN = 24; // 启动位置距屏幕右下角
+const PET_PADDING = 12; // 猫本体窗口四周留白（给投影/拖拽手柄）
+const MIN_VISIBLE = 48; // 位置恢复时至少留多少像素在屏幕内
+const BUBBLE_MAX_WIDTH = 320; // 设计文档 4.4
+const BUBBLE_MAX_HEIGHT = 400;
+const BUBBLE_PADDING_X = 24;
+const BUBBLE_GAP = 8; // 气泡底部距角色顶部
+const DEEP_NIGHT_START = 22; // 22:00-07:00
+const DEEP_NIGHT_END = 7;
+const ACTIVITY_NEAR_PX = 120; // 鼠标在猫附近移动也算「人在」
+const ACTIVITY_THROTTLE_MS = 5000;
+
+let win = null;
+let settingsWin = null;
+let tray = null;
+let configPath = null;
+let statePath = null;
+let config = null;
+let state = null;
+let runtime = null;
+let replyService = null;
+let baseBounds = null; // 猫本体窗口的基准位置/尺寸（气泡展开时窗口临时变大，基准不变）
+let bubbleContent = null;
+let dragSession = null;
+let lastPetState = 'idle';
+let lastCursor = null;
+let lastNearActivityAt = 0;
+let cursorTimer = null;
+let schedulerTimer = null;
+let deepNightTimer = null;
+let breakTimer = null;
+let breakUntil = 0;
+let smokeTimer = null;
+let rendererReport = null;
+let selfCheckActive = false;
+let ignoreMouseActive = true;
+let quitting = false;
+
+function log() {
+  const args = Array.prototype.slice.call(arguments);
+  console.log.apply(console, ['[hermes-pet]'].concat(args));
+}
+
+function isDeepNight(now) {
+  if (!config || config.deepNightEnabled === false) return false;
+  const hour = new Date(now).getHours();
+  return hour >= DEEP_NIGHT_START || hour < DEEP_NIGHT_END;
+}
+
+function petWindowSize() {
+  const size = config.size;
+  return { width: size + PET_PADDING * 2, height: size + PET_PADDING * 2 };
+}
+
+function sendToPet(channel, payload) {
+  if (win && !win.isDestroyed() && win.webContents && !win.webContents.isDestroyed()) {
+    win.webContents.send(channel, payload);
+  }
+}
+
+function clampToWorkArea(bounds) {
+  const display = screen.getDisplayMatching({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+  });
+  const wa = display.workArea;
+  const minX = wa.x - bounds.width + MIN_VISIBLE;
+  const maxX = wa.x + wa.width - MIN_VISIBLE;
+  const minY = wa.y - bounds.height + MIN_VISIBLE;
+  const maxY = wa.y + wa.height - MIN_VISIBLE;
+  return {
+    x: Math.round(Math.min(Math.max(bounds.x, minX), maxX)),
+    y: Math.round(Math.min(Math.max(bounds.y, minY), maxY)),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height),
+  };
+}
+
+function defaultBaseBounds() {
+  const size = petWindowSize();
+  const wa = screen.getPrimaryDisplay().workArea;
+  return clampToWorkArea({
+    x: wa.x + wa.width - size.width - EDGE_MARGIN,
+    y: wa.y + wa.height - size.height - EDGE_MARGIN,
+    width: size.width,
+    height: size.height,
+  });
+}
+
+function restoreBaseBounds() {
+  const size = petWindowSize();
+  if (Number.isFinite(state.x) && Number.isFinite(state.y)) {
+    return clampToWorkArea({ x: state.x, y: state.y, width: size.width, height: size.height });
+  }
+  return defaultBaseBounds();
+}
+
+function windowBoundsForBubble(content) {
+  const size = petWindowSize();
+  if (!content) return Object.assign({}, baseBounds);
+  const width = Math.max(
+    size.width,
+    Math.round(Math.min(BUBBLE_MAX_WIDTH + BUBBLE_PADDING_X, Math.max(160, content.width + BUBBLE_PADDING_X)))
+  );
+  const bodyHeight = Math.max(0, Math.min(BUBBLE_MAX_HEIGHT, Math.round(content.height)));
+  const height = size.height + bodyHeight + BUBBLE_GAP;
+  const centerX = baseBounds.x + baseBounds.width / 2;
+  const bottom = baseBounds.y + baseBounds.height;
+  return {
+    x: Math.round(centerX - width / 2),
+    y: Math.round(bottom - height),
+    width: width,
+    height: height,
+  };
+}
+
+function syncWindowBounds() {
+  if (!win || win.isDestroyed()) return;
+  win.setBounds(windowBoundsForBubble(bubbleContent));
+}
+
+function persistPosition() {
+  if (!baseBounds || !state) return;
+  state.x = Math.round(baseBounds.x);
+  state.y = Math.round(baseBounds.y);
+  persistState();
+}
+
+function persistState() {
+  try {
+    if (!statePath) return;
+    state.scheduler = runtime ? Object.assign({}, runtime) : {};
+    configStore.saveState(statePath, state);
+  } catch (err) {
+    log('state 保存失败：', err && err.message ? err.message : String(err));
+  }
+}
+
+function persistRuntime() {
+  persistState();
+}
+
+function loadPersisted() {
+  configPath = path.join(app.getPath('userData'), 'config.json');
+  statePath = path.join(app.getPath('userData'), 'state.json');
+  config = configStore.loadConfig(configPath);
+  state = configStore.loadState(statePath);
+  runtime = scheduler.normaliseRuntime(state.scheduler, Date.now());
+}
+
+function createPetWindow() {
+  baseBounds = restoreBaseBounds();
+  win = new BrowserWindow({
+    x: baseBounds.x,
+    y: baseBounds.y,
+    width: baseBounds.width,
+    height: baseBounds.height,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    show: false,
+    fullscreenable: false,
+    maximizable: false,
+    minimizable: false,
+    icon: path.join(SPRITE_DIR, 'icon-64.png'),
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      // 关掉 renderer sandbox：preload 需要 require 本项目的纯逻辑模块（src/core/*），
+      // 复用同一份状态机与取帧实现；contextIsolation 仍然开着，也不暴露 ipcRenderer。
+      sandbox: false,
+      backgroundThrottling: false,
+      spellcheck: false,
+    },
+  });
+  win.setMenuBarVisibility(false);
+  // Windows 上透明窗口整矩形都吃鼠标事件 —— 不处理就是桌面上的一块「看不见的挡板」。
+  // 策略：默认穿透（ignore=true），渲染进程用 elementFromPoint 命中测试，
+  // 鼠标移到猫/气泡上时通过 IPC 临时关掉穿透；forward:true 保证穿透时仍能收到 mousemove。
+  win.setIgnoreMouseEvents(true, { forward: true });
+  ignoreMouseActive = true;
+  if (SMOKE_TEST) {
+    // 冒烟测试期间把渲染进程的报错原样吐到 stdout，失败时能直接看到原因
+    win.webContents.on('console-message', function (event) {
+      log('[renderer]', event && event.message, '(', event && event.sourceId, event && event.lineNumber, ')');
+    });
+    win.webContents.on('did-fail-load', function (event, code, desc, url) {
+      log('[renderer] did-fail-load', code, desc, url);
+    });
+    win.webContents.on('preload-error', function (event, preloadPath, error) {
+      log('[renderer] preload-error', preloadPath, error && error.message);
+    });
+    win.webContents.on('render-process-gone', function (event, details) {
+      log('[renderer] render-process-gone', JSON.stringify(details));
+    });
+  }
+  win.webContents.setWindowOpenHandler(function () {
+    return { action: 'deny' };
+  });
+  win.once('ready-to-show', function () {
+    win.show();
+    pushConfig();
+  });
+  win.on('closed', function () {
+    win = null;
+  });
+  win.loadFile(path.join(RENDERER_DIR, 'index.html'));
+}
+
+function pushConfig() {
+  sendToPet('config:changed', { config: config, deepNight: isDeepNight(Date.now()) });
+  sendToPet('pet:pause', { paused: Boolean(state.paused) });
+  sendToPet('pet:command', { command: 'pin', pinned: Boolean(state.pinned) });
+}
+
+function createTray() {
+  const iconPath = path.join(SPRITE_DIR, 'tray.png');
+  let image = nativeImage.createFromPath(iconPath);
+  if (!image.isEmpty()) {
+    image = image.resize({ width: 16, height: 16 });
+  }
+  tray = new Tray(image);
+  tray.setToolTip('hermes-pet 琉斯');
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate()));
+  tray.on('click', function () {
+    toggleVisibility();
+  });
+}
+
+function refreshTrayMenu() {
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate()));
+}
+
+function petMenuTemplate() {
+  return [
+    { label: '对话', click: function () { sendToPet('pet:command', { command: 'dialogue' }); } },
+    { label: '设置', click: function () { openSettings(); } },
+    { type: 'separator' },
+    {
+      label: '固定位置',
+      type: 'checkbox',
+      checked: Boolean(state.pinned),
+      click: function (item) { setPinned(item.checked); },
+    },
+    { label: '重置位置', click: function () { resetPosition(); } },
+    {
+      label: '暂停',
+      type: 'checkbox',
+      checked: Boolean(state.paused),
+      click: function (item) { setPaused(item.checked); },
+    },
+    { type: 'separator' },
+    { label: '退出', click: function () { quitApp(); } },
+  ];
+}
+
+function trayMenuTemplate() {
+  const visible = Boolean(win && !win.isDestroyed() && win.isVisible());
+  return [
+    { label: visible ? '隐藏' : '显示', click: function () { toggleVisibility(); } },
+    { type: 'separator' },
+    { label: '暂停动画', type: 'checkbox', checked: Boolean(state.paused), click: function (item) { setPaused(item.checked); } },
+    { label: '重置位置', click: function () { resetPosition(); } },
+    { label: '设置', click: function () { openSettings(); } },
+    { type: 'separator' },
+    { label: '退出', click: function () { quitApp(); } },
+  ];
+}
+
+function toggleVisibility() {
+  if (!win || win.isDestroyed()) return;
+  if (win.isVisible()) win.hide();
+  else win.show();
+  refreshTrayMenu();
+}
+
+function quitApp() {
+  quitting = true;
+  persistState();
+  app.quit();
+}
+
+function setPaused(value) {
+  state.paused = Boolean(value);
+  persistState();
+  sendToPet('pet:pause', { paused: state.paused });
+  refreshTrayMenu();
+  return { ok: true, paused: state.paused };
+}
+
+function setPinned(value) {
+  state.pinned = Boolean(value);
+  persistState();
+  sendToPet('pet:command', { command: 'pin', pinned: state.pinned });
+  refreshTrayMenu();
+  return { ok: true, pinned: state.pinned };
+}
+
+function resetPosition() {
+  baseBounds = defaultBaseBounds();
+  persistPosition();
+  syncWindowBounds();
+  return { ok: true, x: baseBounds.x, y: baseBounds.y };
+}
+
+function recenterForSize() {
+  const size = petWindowSize();
+  const anchor = baseBounds || defaultBaseBounds();
+  const centerX = anchor.x + anchor.width / 2;
+  const bottom = anchor.y + anchor.height;
+  baseBounds = clampToWorkArea({
+    x: Math.round(centerX - size.width / 2),
+    y: Math.round(bottom - size.height),
+    width: size.width,
+    height: size.height,
+  });
+  persistPosition();
+  syncWindowBounds();
+}
+
+let settingsShownAt = 0;
+
+function openSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    return { ok: true, reused: true };
+  }
+  const anchor = baseBounds || defaultBaseBounds();
+  const width = 480; // 设计文档 4.4
+  const height = 560;
+  const display = screen.getDisplayMatching(anchor);
+  const wa = display.workArea;
+  const x = Math.round(Math.min(Math.max(anchor.x + anchor.width - width, wa.x + 16), wa.x + wa.width - width - 16));
+  const y = Math.round(Math.min(Math.max(anchor.y + anchor.height - height, wa.y + 16), wa.y + wa.height - height - 16));
+  settingsWin = new BrowserWindow({
+    x: x,
+    y: y,
+    width: width,
+    height: height,
+    transparent: true,
+    frame: false,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      spellcheck: false,
+    },
+  });
+  settingsWin.once('ready-to-show', function () {
+    settingsShownAt = Date.now();
+    settingsWin.show();
+    settingsWin.focus();
+  });
+  settingsWin.on('blur', function () {
+    if (settingsWin && !settingsWin.isDestroyed() && Date.now() - settingsShownAt > 400) {
+      settingsWin.close();
+    }
+  });
+  settingsWin.on('closed', function () {
+    settingsWin = null;
+  });
+  settingsWin.loadFile(path.join(RENDERER_DIR, 'settings.html'));
+  return { ok: true };
+}
+
+function closeSettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.close();
+  return { ok: true };
+}
+
+function startBreakCountdown(minutes) {
+  const mins = Number.isFinite(minutes) ? Math.max(1, Math.min(60, Math.round(minutes))) : 5;
+  breakUntil = Date.now() + mins * 60000;
+  if (breakTimer) clearInterval(breakTimer);
+  sendToPet('break:tick', { active: true, remainingMs: breakUntil - Date.now() });
+  breakTimer = setInterval(function () {
+    const remaining = breakUntil - Date.now();
+    if (remaining <= 0) {
+      clearInterval(breakTimer);
+      breakTimer = null;
+      sendToPet('break:tick', { active: false, remainingMs: 0, done: true });
+      sendToPet('pet:proactive', { kind: 'wake', text: '回来吧。休息完了。', button: null, fromUser: true });
+      return;
+    }
+    sendToPet('break:tick', { active: true, remainingMs: remaining });
+  }, 1000);
+  return { ok: true, until: breakUntil };
+}
+
+function stopBreakCountdown() {
+  if (breakTimer) {
+    clearInterval(breakTimer);
+    breakTimer = null;
+  }
+  breakUntil = 0;
+}
+
+function markActivity(now) {
+  runtime = scheduler.markActivity(runtime, now);
+}
+
+function applyAutoLaunch() {
+  if (SMOKE_TEST) return;
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(config.launchAtLogin) });
+  } catch (err) {
+    log('开机自启设置失败：', err && err.message ? err.message : String(err));
+  }
+}
+
+function applyConfigPatch(patch) {
+  const beforeSize = config.size;
+  config = configStore.saveConfig(configPath, Object.assign({}, config, patch || {}));
+  applyAutoLaunch();
+  if (config.size !== beforeSize) recenterForSize();
+  else syncWindowBounds();
+  pushConfig();
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('config:changed', { config: config, deepNight: isDeepNight(Date.now()) });
+  }
+  return { ok: true, config: config };
+}
+
+function registerIpc() {
+  ipcMain.on('pet:ready', function (event, info) {
+    rendererReport = info || {};
+  });
+  ipcMain.on('pet:activity', function () {
+    markActivity(Date.now());
+  });
+  ipcMain.on('pet:state', function (event, info) {
+    if (info && typeof info.name === 'string') lastPetState = info.name;
+  });
+  ipcMain.on('pet:dialogue', function (event, info) {
+    runtime = scheduler.recordDialogue(runtime, Date.now(), Boolean(info && info.open));
+  });
+  ipcMain.on('pet:typing', function (event, info) {
+    runtime = scheduler.recordTyping(runtime, Date.now(), Boolean(info && info.active));
+  });
+  ipcMain.on('bubble:ignored', function (event, info) {
+    runtime = scheduler.recordIgnored(runtime, Date.now(), info && info.kind);
+    persistState();
+  });
+  ipcMain.on('pet:drag-start', function (event, point) {
+    if (!win || win.isDestroyed() || state.pinned) return;
+    const bounds = win.getBounds();
+    dragSession = {
+      originX: bounds.x,
+      originY: bounds.y,
+      pointerX: point && Number.isFinite(point.x) ? point.x : 0,
+      pointerY: point && Number.isFinite(point.y) ? point.y : 0,
+    };
+    runtime = scheduler.recordDrag(runtime, Date.now(), true);
+  });
+  ipcMain.on('pet:drag-move', function (event, point) {
+    if (!dragSession || !win || win.isDestroyed()) return;
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
+    const bounds = win.getBounds();
+    win.setBounds({
+      x: dragSession.originX + Math.round(point.x - dragSession.pointerX),
+      y: dragSession.originY + Math.round(point.y - dragSession.pointerY),
+      width: bounds.width,
+      height: bounds.height,
+    });
+  });
+  ipcMain.on('pet:drag-end', function () {
+    if (!win || win.isDestroyed()) return;
+    const bounds = win.getBounds();
+    const size = petWindowSize();
+    baseBounds = clampToWorkArea({
+      x: Math.round(bounds.x + (bounds.width - size.width) / 2),
+      y: Math.round(bounds.y + (bounds.height - size.height)),
+      width: size.width,
+      height: size.height,
+    });
+    dragSession = null;
+    runtime = scheduler.recordDrag(runtime, Date.now(), false);
+    persistPosition();
+    syncWindowBounds();
+  });
+  ipcMain.on('pet:bubble-resize', function (event, size) {
+    if (!size || !Number.isFinite(size.height)) {
+      bubbleContent = null;
+    } else {
+      bubbleContent = {
+        width: Number.isFinite(size.width) ? size.width : 0,
+        height: Math.max(0, Math.min(BUBBLE_MAX_HEIGHT, size.height)),
+      };
+    }
+    syncWindowBounds();
+  });
+  ipcMain.on('pet:context-menu', function () {
+    if (!win || win.isDestroyed()) return;
+    Menu.buildFromTemplate(petMenuTemplate()).popup({ window: win });
+  });
+  ipcMain.on('pet:ignore-mouse', function (event, info) {
+    if (!win || win.isDestroyed()) return;
+    const ignore = !(info && info.ignore === false);
+    if (ignore === ignoreMouseActive) return;
+    ignoreMouseActive = ignore;
+    win.setIgnoreMouseEvents(ignore, { forward: true });
+  });
+  ipcMain.handle('chat:send', async function (event, text) {
+    return replyService.reply(text);
+  });
+  ipcMain.handle('config:get', function () {
+    return {
+      config: config,
+      deepNight: isDeepNight(Date.now()),
+      paused: Boolean(state.paused),
+      pinned: Boolean(state.pinned),
+      primaryAdapter: replyService ? replyService.primaryName : 'local-mock',
+      spritesDir: SPRITE_DIR,
+    };
+  });
+  ipcMain.handle('config:set', function (event, patch) {
+    return applyConfigPatch(patch);
+  });
+  ipcMain.handle('pet:reset-position', function () {
+    return resetPosition();
+  });
+  ipcMain.handle('pet:toggle-pause', function (event, value) {
+    return setPaused(value);
+  });
+  ipcMain.handle('pet:toggle-pin', function (event, value) {
+    return setPinned(value);
+  });
+  ipcMain.handle('settings:open', function () {
+    return openSettings();
+  });
+  ipcMain.handle('settings:close', function () {
+    return closeSettings();
+  });
+  ipcMain.handle('break:start', function (event, minutes) {
+    return startBreakCountdown(minutes);
+  });
+}
+
+function schedulerTick() {
+  if (!config || !runtime) return;
+  const now = Date.now();
+  // 墙钟护栏：时间回拨 -> 重置基准并静默；长时间挂起后醒来 -> 只判定一次，不补发历史
+  const guard = scheduler.guardTick(now, runtime);
+  runtime = guard.runtime;
+  if (guard.skip) return;
+  const hidden = !win || win.isDestroyed() || !win.isVisible();
+  const decision = scheduler.plan({
+    now: now,
+    config: config,
+    runtime: runtime,
+    state: lastPetState,
+    paused: Boolean(state.paused) || selfCheckActive,
+    hidden: hidden,
+  });
+  if (decision.action === 'nap') {
+    sendToPet('pet:command', { command: 'nap' });
+  }
+  if (decision.speak) {
+    runtime = scheduler.recordSpoken(runtime, now, decision.kind);
+    persistState();
+    sendToPet('pet:proactive', {
+      kind: decision.kind,
+      text: replies.proactiveLine(decision.kind, { nickname: config.nickname, now: now }),
+      button: decision.kind === 'break' ? '休息 5 分钟' : null,
+    });
+  }
+}
+
+function tickCursor() {
+  if (!win || win.isDestroyed() || !win.isVisible() || !baseBounds) return;
+  const point = screen.getCursorScreenPoint();
+  sendToPet('pet:cursor', point);
+  const centerX = baseBounds.x + baseBounds.width / 2;
+  const centerY = baseBounds.y + baseBounds.height / 2;
+  const near = Math.hypot(point.x - centerX, point.y - centerY) <= ACTIVITY_NEAR_PX;
+  const moved = lastCursor ? Math.hypot(point.x - lastCursor.x, point.y - lastCursor.y) >= 20 : false;
+  lastCursor = point;
+  const now = Date.now();
+  if (near && moved && now - lastNearActivityAt > ACTIVITY_THROTTLE_MS) {
+    lastNearActivityAt = now;
+    markActivity(now);
+  }
+}
+
+function startTimers() {
+  cursorTimer = setInterval(tickCursor, 200);
+  schedulerTimer = setInterval(schedulerTick, 1000);
+  deepNightTimer = setInterval(function () {
+    sendToPet('pet:deep-night', { deepNight: isDeepNight(Date.now()) });
+  }, 60000);
+}
+
+function stopTimers() {
+  [cursorTimer, schedulerTimer, deepNightTimer, smokeTimer].forEach(function (timer) {
+    if (timer) clearInterval(timer);
+  });
+  cursorTimer = null;
+  schedulerTimer = null;
+  deepNightTimer = null;
+  smokeTimer = null;
+  stopBreakCountdown();
+}
+
+function failureText(err) {
+  if (!err) return 'unknown error';
+  return err.message ? err.message : String(err);
+}
+
+function sleep(ms) {
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** --self-check：把交互链路真正跑一遍（点击 -> 气泡 -> 回复 -> 设置面板），失败即返工。 */
+async function runSelfCheckFlow() {
+  selfCheckActive = true; // 自检期间不弹主动气泡，避免干扰测量
+  const { runSelfCheck } = require('../tools/selfcheck');
+  try {
+    const result = await runSelfCheck({
+      win: win,
+      tray: tray,
+      config: config,
+      rendererReport: function () { return rendererReport; },
+      settingsWindow: function () { return settingsWin; },
+      openSettings: openSettings,
+      closeSettings: closeSettings,
+    });
+    result.steps.forEach(function (step) {
+      log('[selfcheck]', step.ok ? 'OK  ' : 'FAIL', step.name, '-', step.detail);
+    });
+    if (result.ok) {
+      process.stdout.write('SELFCHECK_OK ' + result.steps.length + '/' + result.steps.length + '\n');
+      setTimeout(function () { app.exit(0); }, 80);
+      return;
+    }
+    const names = result.failed.map(function (step) { return step.name; });
+    process.stdout.write('SELFCHECK_FAIL ' + names.join(',') + '\n');
+    setTimeout(function () { app.exit(1); }, 80);
+  } catch (err) {
+    process.stdout.write('SELFCHECK_FAIL ' + failureText(err) + '\n');
+    setTimeout(function () { app.exit(1); }, 80);
+  }
+}
+
+function smokeOutcome() {
+  const payload = {
+    window: Boolean(win && !win.isDestroyed() && win.isVisible()),
+    tray: Boolean(tray && !tray.isDestroyed()),
+    pet: Boolean(rendererReport && rendererReport.catRendered),
+    // P0-2 断言：穿透已接线，初始状态必须是 ignore=true（否则桌面会留一块看不见的挡板）
+    mousePassThrough: ignoreMouseActive === true,
+  };
+  const ok = payload.window && payload.tray && payload.pet && payload.mousePassThrough;
+  return { ok: ok, line: (ok ? 'SMOKE_OK ' : 'SMOKE_FAIL ') + JSON.stringify(payload) };
+}
+
+function finishSmokeCheck() {
+  let result;
+  try {
+    result = smokeOutcome();
+  } catch (err) {
+    process.stdout.write('SMOKE_FAIL ' + failureText(err) + '\n');
+    setTimeout(function () { app.exit(1); }, 80);
+    return;
+  }
+  process.stdout.write(result.line + '\n');
+  const code = result.ok ? 0 : 1;
+  setTimeout(function () { app.exit(code); }, 80);
+}
+
+function smokeFail(reason) {
+  process.stdout.write('SMOKE_FAIL ' + reason + '\n');
+  setTimeout(function () { app.exit(1); }, 80);
+}
+
+function start() {
+  loadPersisted();
+  replyService = createReplyService({ envPath: ENV_PATH, env: process.env });
+  registerIpc();
+  createPetWindow();
+  createTray();
+  startTimers();
+  log('已启动，adapter =', replyService.primaryName, '；userData =', app.getPath('userData'));
+  if (SMOKE_TEST) smokeTimer = setTimeout(finishSmokeCheck, SMOKE_WAIT_MS);
+  if (SELF_CHECK) {
+    sleep(400).then(runSelfCheckFlow);
+  }
+}
+
+process.on('uncaughtException', function (err) {
+  if (SMOKE_TEST) smokeFail(failureText(err));
+  else log('未捕获异常：', failureText(err));
+});
+
+process.on('unhandledRejection', function (err) {
+  log('未处理的 Promise 拒绝：', failureText(err));
+});
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', function () {
+    if (win && !win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  app.whenReady().then(function () {
+    try {
+      start();
+    } catch (err) {
+      if (SMOKE_TEST) smokeFail(failureText(err));
+      else {
+        log('启动失败：', failureText(err));
+        app.quit();
+      }
+    }
+  });
+  app.on('before-quit', function () {
+    quitting = true;
+    stopTimers();
+    persistState();
+  });
+  // 桌宠常驻：关掉窗口不等于退出（退出只走托盘/右键菜单）
+  app.on('window-all-closed', function () {
+    if (quitting) app.quit();
+  });
+}

@@ -1,0 +1,29 @@
+﻿### docs/tutorial/custom-window-styles.md
+  L3: ## Frameless windows
+  L11: ```fiddle docs/fiddles/features/window-customization/custom-window-styles/frameless-windows
+  L15: On Wayland (Linux), frameless windows have GTK drop shadows and extended
+  L19: ## Transparent windows
+  L21: ![Transparent Window](../images/transparent-window.png)
+  L22: ![Transparent Window in macOS Mission Control](../images/transparent-window-mission-control.png)
+  L24: To create a fully transparent window, set the [`BaseWindowContructorOptions`][] `transparent` param in the `BrowserWindow` constructor to `true`.
+  L26: The following fiddle takes advantage of a transparent window and CSS styling to create
+  L29: ```fiddle docs/fiddles/features/window-customization/custom-window-styles/transparent-windows
+  L33: ### Limitations
+  L35: * You cannot click through the transparent area. See
+  L37: * Transparent windows are not resizable. Setting `resizable` to `true` may make
+  L38: a transparent window stop working on some platforms.
+  L42: * The window will not be transparent when DevTools is opened.
+  L43: * On _Windows_:
+  L44: * Transparent windows can not be maximized using the Windows system menu or by double
+  L48: * The native window shadow will not be shown on a transparent window.
+### docs/tutorial/custom-window-interactions.md
+  L5: By default, windows are dragged using the title bar provided by the OS chrome. Apps
+  L64: ## Click-through windows
+  L66: To create a click-through window, i.e. making the window ignore all mouse
+  L67: events, you can call the [win.setIgnoreMouseEvents(ignore)][ignore-mouse-events]
+  L74: win.setIgnoreMouseEvents(true)
+  L77: ### Forward mouse events _macOS_ _Windows_
+  L80: meaning that mouse movement events will not be emitted. On Windows and macOS, an
+  L97: win.setIgnoreMouseEvents(ignore, options)
+  L113: This makes the web page click-through when over the `#clickThroughElement` element,
+  L116: [ignore-mouse-events]: ../api/browser-window.md#winsetignoremouseeventsignore-options

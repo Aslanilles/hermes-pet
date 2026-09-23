@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang='zh-CN'>
+  <head>
+    <meta charset='utf-8' />
+    <!-- 单引号属性 + &#39; 实体：内容全程不含双引号，方便脚本化落盘；浏览器解析后仍是标准 CSP -->
+    <meta
+      http-equiv='Content-Security-Policy'
+      content='default-src &#39;self&#39;; img-src &#39;self&#39; file: data:; style-src &#39;self&#39; &#39;unsafe-inline&#39;; script-src &#39;self&#39;'
+    />
+    <title>hermes-pet</title>
+    <link rel='stylesheet' href='pet.css' />
+  </head>
+  <body>
+    <div id='stage'>
+      <div id='bubble' class='bubble is-hidden' role='dialog' aria-live='polite'>
+        <div id='bubble-notice' class='bubble-notice is-hidden'></div>
+        <div id='bubble-user' class='bubble-user is-hidden'></div>
+        <div id='bubble-text' class='bubble-text'></div>
+        <div id='bubble-actions' class='bubble-actions is-hidden'>
+          <button id='bubble-action' class='btn btn-primary' type='button'></button>
+        </div>
+        <div id='composer' class='composer is-hidden'>
+          <textarea id='input' class='input' rows='1' placeholder='说点什么…（Enter 发送 / Shift+Enter 换行）' spellcheck='false'></textarea>
+          <button id='send' class='btn btn-send' type='button' title='发送'>发送</button>
+        </div>
+      </div>
+      <div id='cat-slot' class='cat-slot'>
+        <div id='cat' class='cat' title='单击对话 · 双击设置 · 右键更多'></div>
+      </div>
+    </div>
+    <script src='pet.js'></script>
+  </body>
+</html>

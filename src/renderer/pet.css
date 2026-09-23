@@ -1,0 +1,268 @@
+/* hermes-pet 桌宠窗口样式。
+   色彩 / 尺寸 / 圆角 / 阴影照抄 hermes-pet-product-design.md 4.2 / 4.4 / 4.5 / 4.6，
+   深夜色板取 4.2 的夜间一列。全部使用单引号，避免脚本化落盘时的引号转义问题。 */
+
+:root {
+  --pet-size: 120px;
+  --pet-scale: 3.75;
+  --deep-blue: #2d3748;
+  --star-gold: #ecc94b;
+  --cloud-white: #f7fafc;
+  --ink: #1a202c;
+  --muted: #4a5568;
+  --warn: #ed8936;
+  --night-bg: #2d3748;
+  --night-ink: #e2e8f0;
+  --night-gold: #d69e2e;
+  --radius-bubble: 12px;
+  --radius-btn: 8px;
+  --shadow-bubble: 0 2px 8px rgba(0, 0, 0, 0.1);
+  --shadow-pet: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: 'Segoe UI', system-ui, 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink);
+  user-select: none;
+  cursor: default;
+}
+
+#stage {
+  height: 100vh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px; /* 设计文档 4.4：气泡底部距角色顶部 8px */
+  padding: 0 12px 12px;
+}
+
+/* ---------------- 角色本体 ---------------- */
+
+.cat-slot {
+  flex: 0 0 auto;
+  width: var(--pet-size);
+  height: var(--pet-size);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 9000;
+}
+
+.cat {
+  width: 32px;
+  height: 32px;
+  background-image: url(../../data/sprites/oneko.gif);
+  background-repeat: no-repeat;
+  background-position: -96px -96px;
+  image-rendering: pixelated;
+  transform: scale(var(--pet-scale));
+  transform-origin: bottom center;
+  filter: drop-shadow(var(--shadow-pet));
+  cursor: grab;
+}
+
+.cat:active {
+  cursor: grabbing;
+}
+
+body.pinned .cat {
+  cursor: default;
+}
+
+/* ---------------- 气泡 ---------------- */
+
+.bubble {
+  flex: 0 0 auto;
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 320px;
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-radius: var(--radius-bubble);
+  background: var(--cloud-white);
+  border: 1px solid rgba(45, 55, 72, 0.1);
+  box-shadow: var(--shadow-bubble);
+  z-index: 9001;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.bubble.is-hidden {
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+}
+
+#bubble-notice.is-hidden,
+#bubble-user.is-hidden,
+#bubble-actions.is-hidden,
+#composer.is-hidden {
+  display: none;
+}
+
+.bubble-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.bubble-user {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  text-align: right;
+}
+
+.bubble-notice {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--warn);
+}
+
+.bubble-actions {
+  margin-top: 10px;
+}
+
+.btn {
+  font: inherit;
+  border: none;
+  border-radius: var(--radius-btn);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.btn-primary {
+  background: var(--deep-blue);
+  color: var(--cloud-white);
+}
+
+.btn-primary:hover {
+  background: var(--star-gold);
+  color: var(--ink);
+}
+
+.composer {
+  margin-top: 10px;
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.input {
+  flex: 1 1 auto;
+  box-sizing: border-box;
+  resize: none;
+  max-height: 96px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  border-radius: var(--radius-btn);
+  border: 1px solid rgba(45, 55, 72, 0.2);
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--star-gold);
+}
+
+.btn-send {
+  background: var(--star-gold);
+  color: var(--ink);
+  padding: 7px 10px;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(45, 55, 72, 0.25);
+  border-radius: 3px;
+}
+
+/* ---------------- 行为态微动（不改精灵索引，只叠 CSS） ----------------
+   talk / listen 在映射表里没有独立帧组，按第二轮修复复用 alert / idle 取帧，
+   再各叠一条 CSS：说话轻微起伏、聆听缓慢呼吸。动画加在 .cat-slot 上而不是
+   .cat 上，因为 .cat 的 transform 已经被 var(--pet-scale) 占用了。 */
+
+@keyframes talk-tilt {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes listen-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+body[data-pet-state='talk'] .cat-slot {
+  animation: talk-tilt 0.6s ease-in-out infinite;
+}
+
+body[data-pet-state='listen'] .cat-slot {
+  animation: listen-breathe 2.4s ease-in-out infinite;
+}
+
+/* ---------------- 深夜模式（22:00-07:00） ---------------- */
+
+body.deep-night .bubble {
+  background: rgba(45, 55, 72, 0.92);
+  border-color: rgba(236, 201, 75, 0.18);
+  color: var(--night-ink);
+}
+
+body.deep-night .cat {
+  filter: saturate(0.6) brightness(0.85) drop-shadow(var(--shadow-pet));
+}
+
+body.deep-night .bubble-user {
+  color: #a0aec0;
+}
+
+body.deep-night .bubble-notice {
+  color: var(--night-gold);
+}
+
+body.deep-night .input {
+  background: rgba(26, 32, 44, 0.85);
+  border-color: rgba(236, 201, 75, 0.25);
+  color: var(--night-ink);
+}
+
+body.deep-night .btn-primary {
+  background: var(--night-gold);
+  color: #1a202c;
+}
+
+/* 深夜模式：动画频率减半（与 30fps -> 15fps 的换帧节拍一致） */
+body.deep-night[data-pet-state='talk'] .cat-slot {
+  animation-duration: 1.2s;
+}
+
+body.deep-night[data-pet-state='listen'] .cat-slot {
+  animation-duration: 4.8s;
+}

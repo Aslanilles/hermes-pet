@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang='zh-CN'>
+  <head>
+    <meta charset='utf-8' />
+    <title>hermes-pet 精灵表映射预览</title>
+    <style>
+      /* 开发用页面：无依赖，直接 file:// 打开即可（不需要 npm install / 不需要 Electron） */
+      body {
+        margin: 24px;
+        background: #1a202c;
+        color: #e2e8f0;
+        font-family: 'Segoe UI', system-ui, 'Microsoft YaHei', sans-serif;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      h1 {
+        font-size: 18px;
+        color: #ecc94b;
+      }
+      h2 {
+        margin-top: 28px;
+        font-size: 15px;
+        color: #ecc94b;
+        border-bottom: 1px solid rgba(236, 201, 75, 0.3);
+        padding-bottom: 6px;
+      }
+      .note {
+        color: #a0aec0;
+        max-width: 900px;
+      }
+      .state-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 16px;
+        padding: 10px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+      .state-name {
+        width: 150px;
+        flex: 0 0 auto;
+        color: #ecc94b;
+        font-weight: 600;
+      }
+      .state-name small {
+        display: block;
+        color: #718096;
+        font-weight: 400;
+      }
+      .frame {
+        flex: 0 0 auto;
+        text-align: center;
+      }
+      .box {
+        width: 128px;
+        height: 128px;
+        display: flex;
+        align-items: flex-end;
+        justify-content: center;
+        background: #2d3748;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .cat {
+        width: 32px;
+        height: 32px;
+        background-image: url(../data/sprites/oneko.gif);
+        background-repeat: no-repeat;
+        image-rendering: pixelated;
+        transform-origin: bottom center;
+      }
+      .cap {
+        margin-top: 4px;
+        color: #a0aec0;
+        font-size: 11px;
+        font-family: Consolas, monospace;
+      }
+      .sheet {
+        display: inline-block;
+        background: #2d3748;
+        padding: 8px;
+        border-radius: 8px;
+      }
+      .sheet-row {
+        display: flex;
+      }
+      .cell {
+        width: 64px;
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        outline: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .cell .cat {
+        transform: scale(2);
+      }
+      .axis {
+        color: #718096;
+        font-family: Consolas, monospace;
+        font-size: 11px;
+        margin: 0 0 4px 40px;
+      }
+      pre {
+        background: #2d3748;
+        padding: 12px;
+        border-radius: 8px;
+        overflow: auto;
+        color: #cbd5e0;
+        font-size: 12px;
+      }
+      code {
+        color: #ecc94b;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>hermes-pet 精灵表映射预览</h1>
+    <p class='note'>
+      索引表与取帧公式直接来自 <code>src/core/sprite-frames.js</code>（与运行时同一份，不会漂移）。
+      素材：<code>data/sprites/oneko.gif</code>（256x128，8 列 x 4 行，每格 32x32）。
+      每一格都标注了帧序号与 <code>background-position</code>，供人工一眼核对。
+    </p>
+
+    <h2>1. hermes-pet 状态 -&gt; oneko 组的实际帧</h2>
+    <div id='states'></div>
+
+    <h2>2. 整张表 8x4（列 0-7 / 行 0-3）</h2>
+    <div id='axis-col' class='axis'></div>
+    <div id='sheet' class='sheet'></div>
+
+    <h2>3. 原始索引表</h2>
+    <pre id='raw'></pre>
+
+    <script src='../src/core/sprite-frames.js'></script>
+    <script>
+      const S = window.hermesSpriteFrames;
+      const SPRITE_URL = '../data/sprites/oneko.gif';
+
+      function makeCat(group, frame, scale) {
+        const el = document.createElement('div');
+        el.className = 'cat';
+        el.style.backgroundImage = 'url(' + SPRITE_URL + ')';
+        el.style.backgroundPosition = S.spritePosition(group, frame);
+        el.style.transform = 'scale(' + scale + ')';
+        return el;
+      }
+
+      function renderStates() {
+        const host = document.getElementById('states');
+        S.PET_STATES.forEach(function (state) {
+          const group = S.STATE_SPRITES[state];
+          const frames = S.frameCount(group);
+          const row = document.createElement('div');
+          row.className = 'state-row';
+          const name = document.createElement('div');
+          name.className = 'state-name';
+          name.innerHTML = state + '<small>oneko 组：' + group + '（' + frames + ' 帧）</small>';
+          row.appendChild(name);
+          for (let i = 0; i < frames; i += 1) {
+            const cell = document.createElement('div');
+            cell.className = 'frame';
+            const box = document.createElement('div');
+            box.className = 'box';
+            box.appendChild(makeCat(group, i, 4));
+            const cap = document.createElement('div');
+            cap.className = 'cap';
+            cap.textContent = 'frame ' + i + ' @ ' + S.spritePosition(group, i);
+            cell.appendChild(box);
+            cell.appendChild(cap);
+            row.appendChild(cell);
+          }
+          host.appendChild(row);
+        });
+      }
+
+      function renderSheet() {
+        const axis = document.getElementById('axis-col');
+        let labels = '        ';
+        for (let col = 0; col < S.SHEET_COLUMNS; col += 1) labels += '  col' + col + '   ';
+        axis.textContent = labels;
+        const host = document.getElementById('sheet');
+        for (let row = 0; row < S.SHEET_ROWS; row += 1) {
+          const line = document.createElement('div');
+          line.className = 'sheet-row';
+          const tag = document.createElement('div');
+          tag.className = 'axis';
+          tag.style.margin = '0 8px 0 0';
+          tag.style.lineHeight = '64px';
+          tag.textContent = 'row' + row;
+          line.appendChild(tag);
+          for (let col = 0; col < S.SHEET_COLUMNS; col += 1) {
+            const cell = document.createElement('div');
+            cell.className = 'cell';
+            const el = document.createElement('div');
+            el.className = 'cat';
+            el.style.backgroundImage = 'url(' + SPRITE_URL + ')';
+            el.style.backgroundPosition = -col * S.SPRITE_CELL + 'px ' + -row * S.SPRITE_CELL + 'px';
+            cell.appendChild(el);
+            line.appendChild(cell);
+          }
+          host.appendChild(line);
+        }
+      }
+
+      function renderRaw() {
+        document.getElementById('raw').textContent = JSON.stringify(S.SPRITE_SETS, null, 2);
+      }
+
+      renderStates();
+      renderSheet();
+      renderRaw();
+    </script>
+  </body>
+</html>
