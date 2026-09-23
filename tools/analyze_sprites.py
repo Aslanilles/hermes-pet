@@ -46,7 +46,7 @@ def main() -> None:
         for c in range(cols):
             tile = sheet.crop((c * CELL, r * CELL, (c + 1) * CELL, (r + 1) * CELL))
             alpha = tile.getchannel("A")
-            opaque = sum(1 for v in alpha.getdata() if v > 60)
+            opaque = sum(alpha.histogram()[61:])
             counts[(r, c)] = opaque / (CELL * CELL)
 
     lines.append("不透明像素占比矩阵 (row x col):")
