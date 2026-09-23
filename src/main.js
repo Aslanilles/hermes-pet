@@ -67,6 +67,11 @@ let ignoreWatchdog = null;
 let rendererReport = null;
 let selfCheckActive = false;
 let ignoreMouseActive = true;
+// FIX-1（第五轮）：建窗后、渲染进程任何命中测试之前的初始态快照。
+// ignoreMouseActive 会被渲染进程合法改写（真实光标压进猫的矩形 -> forward 转发 mousemove
+// -> 命中「可交互」-> 关穿透），直接读它做断言会随用户光标位置随机变红；验收门必须钉在这个
+// 只写一次的快照上。
+let ignoreMouseAtStart = null;
 let lastInteractive = false; // 渲染进程最近一次报的「有没有命中交互元素」，穿透看门狗据此兜底
 let quitting = false;
 
@@ -276,6 +281,9 @@ function createPetWindow() {
   // 鼠标移到猫/气泡上时通过 IPC 临时关掉穿透；forward:true 保证穿透时仍能收到 mousemove。
   win.setIgnoreMouseEvents(true, { forward: true });
   ignoreMouseActive = true;
+  // FIX-1：初始态快照 —— 此刻渲染进程还没跑过任何 elementFromPoint 命中测试，
+  // 这个值之后不会被渲染进程的回包污染，才是「初始不留挡板」的可靠证据。
+  ignoreMouseAtStart = ignoreMouseActive;
   lastInteractive = false;
   // 页面重载 / 跳转后 Chromium 的 forward 转发会静默失效（docs/M0-recon-github-pet.md §5.2），
   // 这正是「透明区域又开始挡桌面点击」的现场 -> 每次页面加载完立刻重断言一次穿透。
@@ -619,14 +627,10 @@ function registerIpc() {
     if (!win || win.isDestroyed()) return;
     Menu.buildFromTemplate(petMenuTemplate()).popup({ window: win });
   });
+  // FIX-1：handler 主体抽成 applyIgnoreMouse()，好让 --smoke-test 在不依赖真实光标与渲染
+  // 进程时序的前提下，确定性地走一遍同一条状态切换路径（见 probeMousePassThrough）。
   ipcMain.on('pet:ignore-mouse', function (event, info) {
-    if (!win || win.isDestroyed()) return;
-    const ignore = !(info && info.ignore === false);
-    // 渲染进程每次命中变化都会报一次，主进程缓存下来给穿透看门狗用（FIX-B）。
-    lastInteractive = !ignore;
-    if (ignore === ignoreMouseActive) return;
-    ignoreMouseActive = ignore;
-    win.setIgnoreMouseEvents(ignore, { forward: true });
+    applyIgnoreMouse(info, 'renderer');
   });
   ipcMain.handle('chat:send', async function (event, text) {
     return replyService.reply(text);
@@ -788,6 +792,52 @@ function failureText(err) {
   return err.message ? err.message : String(err);
 }
 
+/**
+ * `pet:ignore-mouse` 的状态切换主体（FIX-1 从 IPC handler 里抽出来）。
+ * 渲染进程 elementFromPoint 命中变化时发来的就是 `{ ignore: <boolean> }`，
+ * 所以直接调它 = 走一遍和真实命中完全相同的路径。
+ * source 只用于 --smoke-test 的日志：区分「真实光标命中触发」与「探针合成」。
+ */
+function applyIgnoreMouse(info, source) {
+  if (!win || win.isDestroyed()) return;
+  const ignore = !(info && info.ignore === false);
+  // 渲染进程每次命中变化都会报一次，主进程缓存下来给穿透看门狗用（FIX-B）。
+  lastInteractive = !ignore;
+  if (ignore === ignoreMouseActive) return;
+  ignoreMouseActive = ignore;
+  win.setIgnoreMouseEvents(ignore, { forward: true });
+  if (SMOKE_TEST) log('穿透状态切换：ignore =', ignore, '（来源：' + (source || 'renderer') + '）');
+}
+
+/**
+ * FIX-1（P0，第五轮）：把 `mousePassThrough` 断言从「读一个会被合法改写的当前态」
+ * 改成**光标无关的确定性探针**，四条一起才算通过：
+ *   ① ipcWired  —— `pet:ignore-mouse` 通道确实挂着 handler（接线存在）；
+ *   ② initial   —— 建窗后、任何命中测试之前的快照 ignoreMouseAtStart === true
+ *                  （这才是 P0-1/P0-2 真要不留的那块「挡板」）；
+ *   ③ hit / miss—— 合成「命中交互元素」-> ignoreMouseActive 变 false；
+ *                  再合成「未命中」-> 回到 true（穿透双向真的接线了）；
+ *   ④ restored  —— 断言结束后把状态恢复成 ignoreMouseActive = true。
+ * 全程不读、不动真实光标，也不依赖渲染进程时序，因此不受宿主光标位置影响。
+ */
+function probeMousePassThrough() {
+  const detail = {
+    ipcWired: ipcMain.listenerCount('pet:ignore-mouse') > 0,
+    initial: ignoreMouseAtStart === true,
+    hit: false,
+    miss: false,
+    restored: false,
+  };
+  if (!win || win.isDestroyed()) return detail;
+  applyIgnoreMouse({ ignore: false }, 'probe'); // ③a 合成「命中交互元素」：关穿透
+  detail.hit = ignoreMouseActive === false;
+  applyIgnoreMouse({ ignore: true }, 'probe'); // ③b 合成「未命中」：回到穿透
+  detail.miss = ignoreMouseActive === true;
+  reassertPassThrough('smoke-probe'); // ④ 恢复默认穿透（不看当前值，直接再调一次 API）
+  detail.restored = ignoreMouseActive === true;
+  return detail;
+}
+
 function sleep(ms) {
   return new Promise(function (resolve) {
     setTimeout(resolve, ms);
@@ -835,19 +885,22 @@ async function runSelfCheckFlow() {
 }
 
 function smokeOutcome() {
+  // FIX-1：穿透断言走确定性探针（光标无关），不再直接读会被渲染进程合法改写的 ignoreMouseActive。
+  const pass = probeMousePassThrough();
   const payload = {
     window: Boolean(win && !win.isDestroyed() && win.isVisible()),
     tray: Boolean(tray && !tray.isDestroyed()),
     pet: Boolean(rendererReport && rendererReport.catRendered),
-    // P0-2 断言：穿透已接线，初始状态必须是 ignore=true（否则桌面会留一块看不见的挡板）
-    mousePassThrough: ignoreMouseActive === true,
+    // P0-2 断言（FIX-1 改写）：初始 ignore=true **且** 双向切换都验证通过（合取）。
+    // 字段名保留不变（HANDOFF / 历史证据都引用了它）。
+    mousePassThrough: pass.ipcWired && pass.initial && pass.hit && pass.miss && pass.restored,
     // FIX-A / FIX-B 断言：两条「环境级静默失效」看门狗已接线（第四轮）
     topmostWatchdog: Boolean(topmostWatchdog),
     ignoreWatchdog: Boolean(ignoreWatchdog),
   };
   const ok = payload.window && payload.tray && payload.pet && payload.mousePassThrough
     && payload.topmostWatchdog && payload.ignoreWatchdog;
-  return { ok: ok, line: (ok ? 'SMOKE_OK ' : 'SMOKE_FAIL ') + JSON.stringify(payload) };
+  return { ok: ok, pass: pass, line: (ok ? 'SMOKE_OK ' : 'SMOKE_FAIL ') + JSON.stringify(payload) };
 }
 
 function finishSmokeCheck() {
@@ -859,6 +912,7 @@ function finishSmokeCheck() {
     setTimeout(function () { app.exit(1); }, 80);
     return;
   }
+  log('穿透探针（FIX-1 光标无关）：', JSON.stringify(result.pass));
   process.stdout.write(result.line + '\n');
   const code = result.ok ? 0 : 1;
   setTimeout(function () { app.exit(code); }, 80);

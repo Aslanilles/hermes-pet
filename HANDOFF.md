@@ -572,3 +572,203 @@ SELFCHECK_OK 18/18
 新增 6 条用例（86 -> 92，全在 `tests/window-guards.test.js`）：常数与 §6 对齐 1 条、`shouldReassertTopmost` 4 种组合 1 条 + 8 种布尔组合穷举 1 条 + 缺参 1 条、`watchdogAction` 8 种布尔组合穷举 1 条 + 缺参/真值 `lastInteractive` 一律 `noop` 1 条。
 
 **一处说明**：冒烟日志里的两条 `穿透重断言： did-navigate / did-finish-load` 就是 FIX-B 第 2 条（页面加载后立刻重断言）在真实运行中的现场证据 —— 正常启动也会走这条路，不是异常。
+
+## 13. 第五轮修复（`docs/M0-FIX-ROUND5.md` FIX-1 / FIX-2）
+
+### 现场与真因（来自 `docs/M0-FIX-ROUND5.md` 的独立复验，不是我的自述）
+
+第四轮产物 `b0c5b7d` 上连跑 7 次 `npx electron . --smoke-test`：**1 次红、6 次绿**。红了的那次 `mousePassThrough:false` 不是产品坏了 —— 猫常驻右下角 `(1272,684)-(1416,828)`，当时宿主物理光标在 `1259,702`（紧贴猫左边 13 像素），渲染进程 `elementFromPoint` 命中「可交互」→ **合法地**把穿透关掉 → 旧断言直接读 `ignoreMouseActive`，读到 `false` → `SMOKE_FAIL` + 退出码 1。
+
+也就是说：**产品行为是对的，错的是断言** —— 它读了一个会被合法改写的「当前态」，于是这条验收门会随用户光标位置随机变红；`SMOKE_FAIL` 的退出码 1 还会让 CI/自动化随机挂掉。这种门比没有门更坏。本轮只改这条验收门的确定性 + 补文档，**产品行为一行未动**。
+
+### FIX-1（P0）`mousePassThrough` 改成光标无关的确定性断言
+
+三条要求逐条落实（改动全在 `src/main.js`）：
+
+1. **断言初始态，而不是「当前态」**：`createPetWindow()` 里 `win.setIgnoreMouseEvents(true, { forward: true })` 之后立刻把 `ignoreMouseActive` 快照进独立变量 `ignoreMouseAtStart`（`src/main.js:286`）—— 此刻渲染进程还没跑过任何 `elementFromPoint` 命中测试，这个值不会再被渲染进程的回包污染。断言钉的是 `ignoreMouseAtStart === true`。
+2. **断言双向可切换**：`probeMousePassThrough()`（`src/main.js:821`）主动走一遍 `pet:ignore-mouse` 的状态切换路径 —— ① 合成一次「命中交互元素」（`{ ignore: false }`，与渲染进程命中猫/气泡时发的消息形状逐字相同）→ 断言 `ignoreMouseActive` 变 `false`；② 再合成一次「未命中」（`{ ignore: true }`）→ 断言它回到 `true`；③ 结束后 `reassertPassThrough('smoke-probe')` 把状态恢复成 `ignoreMouseActive = true`，并断言恢复成功。
+   - 合成方式：IPC handler 主体抽成 `applyIgnoreMouse(info, source)`（`src/main.js:801`），探针直接调**同一个函数**，走的就是真实命中那条路径；另外断言 `ipcMain.listenerCount('pet:ignore-mouse') > 0`，证明通道确实挂着 handler。全程不读、不动真实光标，也不依赖渲染进程时序。
+3. **字段名保留**：`mousePassThrough` 不改名、不删除，语义改为 `ipcWired && initial && hit && miss && restored` 的**合取结果**（`src/main.js:894`）。
+
+顺带给 `--smoke-test` 加了一行探针日志，每次冒烟都能看到五个子结果：`穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}`。
+
+#### 验收（a）：连跑 5 次必须 5/5 `SMOKE_OK`、5/5 退出码 0
+
+```powershell
+PS> 1..5 | ForEach-Object { npx electron . --smoke-test; "exit=$LASTEXITCODE" }
+```
+
+原始输出（未加工，5 次连着贴）：
+
+```
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：probe）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：probe）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：probe）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：probe）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：probe）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+```
+
+#### 验收（b）：光标处于不同位置各跑一次 —— 原始输出
+
+宿主光标可以由脚本摆位（`[System.Windows.Forms.Cursor]::Position`），所以没有用「无法控制光标」的免责说法，而是**真摆到两个位置各跑了一次**，跑完把光标还原：
+
+```powershell
+PS> # RUN over-cat：把光标摆进猫的矩形中心 (1255,699)（= 第四轮变红的那个位置条件），并在 6 秒等待期内小幅抖动，确保真的产生 forward 的 mousemove
+PS> npx electron . --smoke-test
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：renderer）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+
+PS> # RUN far-away：把光标摆到 (60,60)，远离猫
+PS> npx electron . --smoke-test
+
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1183,"y":627,"width":144,"height":144} ；win.getBounds() = {"x":1183,"y":627,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+[hermes-pet] 穿透状态切换：ignore = false （来源：probe）
+[hermes-pet] 穿透状态切换：ignore = true （来源：probe）
+[hermes-pet] 穿透重断言： smoke-probe
+[hermes-pet] 穿透探针（FIX-1 光标无关）： {"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit=0
+
+===== cursor restored to (904,490) =====
+```
+
+#### 怎么论证「断言已与光标位置解耦」
+
+不是靠嘴说，靠上面两次跑出来的**行为差异 + 同一结论**：
+
+1. `over-cat` 那次的日志里有一行 `穿透状态切换：ignore = false （来源：renderer）` —— **来源是 renderer**，说明真实光标压进猫的矩形时，渲染进程确实通过了 `pet:ignore-mouse` 合法地把穿透关掉了。这正是第四轮 `mousePassThrough:false` 的现场条件，**被完整复现了**。
+2. 但这次的结论仍是 `SMOKE_OK` + `exit=0`：因为 `mousePassThrough` 不再读那个被改写的当前态，而是读「初始快照 + 双向合成 + 恢复」四个子结果（探针行五个子结果两轮完全一致：`{"ipcWired":true,"initial":true,"hit":true,"miss":true,"restored":true}`）。
+3. `far-away` 那次没有任何 `renderer` 来源的状态切换，结论同样是 `SMOKE_OK` + `exit=0`。**同一份代码，在「光标在猫身上」与「光标在角落」两种输入下给出一致结论** —— 这就是解耦的直接证据。
+
+（附注：两次原始输出里的 `baseBounds = {"x":1183,"y":627,...}` 是宿主上一次拖拽后落盘的猫位置，与本轮改动无关；冒烟只关心字段真假，不关心坐标。）
+
+### FIX-2（P2）「光标压在猫身上时穿透会合法关闭」是设计，不是 bug
+
+> **给用户与下一轮维护者**：如果你把鼠标移到猫身上、发现「这块区域不再穿透桌面点击了」，这是**预期行为**，不是穿透失效。
+
+1. **猫的矩形是可交互区，光标进入时穿透会（且应当）关闭**：窗口默认整矩形穿透（`setIgnoreMouseEvents(true, { forward: true })`），渲染进程用 `document.elementFromPoint()` 命中 `#cat / #cat-slot / #bubble / button / input / textarea` 判定「可交互」，命中就关穿透、离开就开回来（`src/renderer/pet.js` 的 `refreshPassthrough()`，主进程 `applyIgnoreMouse()`）。不这样做的后果是「猫点不动」—— 那才是真 bug。
+2. **代价：在猫的矩形内点击会被猫吃掉**：猫的可交互区是从 `#cat` 元素算起的矩形，猫的透明边角（例如贴图四周的空白）**也算在内**，所以在那块矩形里点桌面图标/其他窗口，会被猫截获而不是落到桌面上。这是「猫可点」的直接代价，第四轮之前就有，不是本轮引入。
+3. **已知的产品级缓解方案（本轮不做，记为 M1 候选）**：托盘菜单加一个「别烦我 / 透明模式」开关（竞品 `isHarryh/Ark-Pets` 有同名功能）。打开后整窗恒定穿透、`refreshPassthrough()` 不再关穿透，猫不再吃点击（代价是那期间猫也点不动/拖不动）。这是**产品行为**改动，按本轮任务书红线不在本轮做。
+
+### 本轮改动清单
+
+- `src/main.js`：新增 `ignoreMouseAtStart` 初始态快照（建窗后立刻拍）；`pet:ignore-mouse` handler 主体抽成 `applyIgnoreMouse(info, source)`；新增 `probeMousePassThrough()`；`smokeOutcome()` 的 `mousePassThrough` 改为合取结果；新增一行 `--smoke-test` 探针日志。**没有改任何窗口/穿透/托盘的产品行为**。
+- `HANDOFF.md`：新增本节（第十三节）。
+- 未新增文件、未改测试、未引入依赖；全量用例仍是 **92**（与第四轮一致，一条不红）。
+- 未改动 `docs/` 下任何已产出文档（含 `M0-recon-github-pet.md` / `M0-review.md` / `M0-features.md` / `M0-spec.md` / `M0-task.md` / `M0-sprite-map.md` 前四节 / `M0-CODEX-BRIEF.md` / `M0-FIX-ROUND2·3·4.md`）与 `hermes-pet-product-design.md`。
+
+### 本轮回归原始输出（汇总）
+
+```powershell
+# 宿主：零依赖纯逻辑（Node 24）
+PS> node --test tests/*.test.js
+...
+ℹ tests 92
+ℹ suites 0
+ℹ pass 92
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+
+# 容器：零依赖纯逻辑（Node 20）
+$ docker exec -w /workspace hermes-pet-dev node --test tests/
+...
+1..92
+# tests 92
+# suites 0
+# pass 92
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+
+# 容器：语法体检（只验本轮改动的那个文件）
+$ docker exec -w /workspace hermes-pet-dev node --check src/main.js
+CONTAINER_JS_SYNTAX_OK
+
+# 宿主：深度自检（18/18，交互链路未受影响）
+PS> npx electron . --self-check
+...
+[hermes-pet] [selfcheck] OK   window-visible - 窗口可见
+[hermes-pet] [selfcheck] OK   tray-created - 托盘图标已创建
+[hermes-pet] [selfcheck] OK   renderer-ready - {"catRendered":true,"sprite":"../../data/sprites/oneko.gif","sheet":"256x128"}
+[hermes-pet] [selfcheck] OK   sprite-applied - background-position=-96px -96px
+[hermes-pet] [selfcheck] OK   state-machine-idle - state=idle
+[hermes-pet] [selfcheck] OK   pet-size-var - --pet-size=120px
+[hermes-pet] [selfcheck] OK   click-opens-dialogue - {"bubbleHidden":false,"composerVisible":true,"bubbleWidth":136}
+[hermes-pet] [selfcheck] OK   window-grows-for-bubble - 144 -> 261
+[hermes-pet] [selfcheck] OK   bubble-width-capped - 宽度 136px（上限 320）
+[hermes-pet] [selfcheck] OK   bubble-fully-visible-at-screen-edge - 气泡屏幕矩形={"width":136,"height":400,"left":1304,"top":408,"right":1440,"bottom":808,"scrollable":true} workArea={"x":0,"y":0,"width":1440,"height":852}
+[hermes-pet] [selfcheck] OK   bubble-long-text-scrolls - scrollHeight > clientHeight = true
+[hermes-pet] [selfcheck] OK   chat-reply - local-mock -> 在。今天想把哪块硬骨头拆解它？
+[hermes-pet] [selfcheck] OK   chat-no-status-code-leak - 气泡文案里没有状态码
+[hermes-pet] [selfcheck] OK   chat-thinking-feedback - sawThinking=false repliedAt=85ms
+[hermes-pet] [selfcheck] OK   chat-submit-path-answered - 气泡最终文案=这句我先收下。要不要我们一起把它拆解它？
+[hermes-pet] [selfcheck] OK   esc-closes-and-shrinks - 144 vs 144
+[hermes-pet] [selfcheck] OK   settings-window - 已创建
+[hermes-pet] [selfcheck] OK   settings-bound-to-config - {"nickname":"琉斯","size":"120","hasBridge":true}
+SELFCHECK_OK 18/18
+```
