@@ -491,3 +491,84 @@ SELFCHECK_OK 18/18
 新增 11 条用例（75 -> 86）：`tests/position.test.js` 6 条（右下角算式 / 坐标缺省与 (0,0) 走默认 / 超界 clamp / 多屏 workArea 偏移 / `fitInside` 平移量）、`tests/config.test.js` 4 条（`ensureConfig` 首启落盘、不覆盖用户值、损坏自愈、坐标缺省为 `null`）、`tests/sprite-frames.test.js` 1 条（talk/listen 复用映射）。
 
 **一处说明**：本轮还想再补一张「猫确实在右下角」的截图，但当时桌面上有一个**全屏置顶的视频播放器**，截出来整屏都是它，拿不到可信画面（这不是本轮的回归，`alwaysOnTop`/窗口属性本轮未改）。猫的位置与可见性以 `win.getBounds()`（与 `baseBounds` 逐字相同）+ `--self-check` 的 `window-visible` + 落盘坐标为准；要肉眼复核，关掉全屏视频再 `npx electron .` 即可。
+
+---
+
+## 12. 第四轮修复（`docs/M0-FIX-ROUND4.md` FIX-A ~ FIX-C）
+
+### 环境级静默失效与对策
+
+> **给下一轮维护者**：看到 `topmostWatchdog` / `ignoreWatchdog` 这两个定时器时，先读这一节再决定要不要删。它们不是冗余代码，是补两条「不报错、表现滞后」的 Windows 环境级失效。判定逻辑全部抽在 `src/core/window-guards.js`（零 `require('electron')`），容器里 `node --test` 直接钉死。
+
+| # | 现象 | 触发场景（实测来源） | 对策 | 常数 / 层级 |
+|---|---|---|---|---|
+| ① | **置顶会丢**：猫被压到任务栏 / 其他窗口下面 | Windows 上 `alwaysOnTop: true` 只在 `BrowserWindow` 构造器里生效一次，之后任务栏或全屏窗口扫过就会被压下去 | 周期看门狗重断言置顶；只在「窗口存在 + 可见 + **未暂停**」时动手（暂停时不抢置顶，「暂停」这个逃生口才成立） | **5000 ms**，层级 `pop-up-menu`（只有它压得过任务栏） |
+| ② | **穿透会丢**：透明区域又开始挡桌面点击 | `win.setIgnoreMouseEvents(true, { forward: true })` 在 Windows 上**宠物页快速重载 / 有全屏窗口扫过之后会静默失效**，且**没有任何报错** | ①周期看门狗兜底：仅在「渲染进程最近一次报的命中状态 = 没命中交互元素」时重断言 `ignore=true`；命中了就什么都不做，否则点猫会失效。②`did-finish-load` / `did-navigate` / `did-navigate-in-page` 时**立刻**重断言一次（这就是「页面重载后」的现场） | **2000 ms**（比重置顶更密） |
+
+**来源（不是作者瞎编的常数）**：
+
+- 置顶看门狗 5000ms + `pop-up-menu`：竞品 **`rullerzhou-afk/clawd-on-desk`** 源码常数 `TOPMOST_WATCHDOG_MS = 5000` → `docs/M0-recon-github-pet.md` §5.2 / §6(a)。
+- 穿透静默失效 + 光标探测看门狗兜底：竞品 **`OpenPetsHQ/openpets`** 源码注释里的实测（`mouse-forwarding.ts` / cursor-probe watchdog）→ `docs/M0-recon-github-pet.md` §5.2 / §6(b)。
+
+**实现位置**：
+
+- 纯函数与常数：`src/core/window-guards.js`（`TOPMOST_WATCHDOG_MS`/`IGNORE_WATCHDOG_MS`/`TOPMOST_LEVEL`、`shouldReassertTopmost()`、`watchdogAction()`）。
+- 接线：`src/main.js` 的 `topmostWatchdogTick()` / `ignoreWatchdogTick()` / `reassertPassThrough()`，定时器在 `startTimers()` 里挂、`stopTimers()` 里清。
+- 红线：`watchdogAction({ lastInteractive: true, ... })` **必须**返回 `'noop'` —— 命中交互元素时绝不能强行重开穿透，否则「点猫」会失效（`tests/window-guards.test.js` 有专项断言）。
+
+### 本轮改动清单
+
+- 新增 `src/core/window-guards.js`（2 个纯函数 + 3 个常数）。
+- `src/main.js`：启动 5000ms 置顶看门狗（`setAlwaysOnTop(true, 'pop-up-menu')`）、2000ms 穿透看门狗（`setIgnoreMouseEvents(true, { forward: true })`）、`did-finish-load`/`did-navigate`/`did-navigate-in-page` 后立刻重断言穿透；主进程缓存 `lastInteractive`；`--smoke-test` 新增 `topmostWatchdog` / `ignoreWatchdog` 两个断言字段。
+- 新增 `tests/window-guards.test.js`（6 条用例，全量 86 -> 92）。
+- 未改动 `docs/M0-recon-github-pet.md`、`M0-review.md`、`M0-features.md`、`M0-spec.md`、`M0-CODEX-BRIEF.md`、`M0-FIX-ROUND2/3.md`、`hermes-pet-product-design.md`；未引入任何新依赖。
+
+### 本轮验收命令原始输出（汇总）
+
+```powershell
+# 宿主：零依赖纯逻辑（Node 24）
+PS> node --test tests/*.test.js
+...
+ℹ tests 92
+ℹ suites 0
+ℹ pass 92
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 204.2554
+
+# 容器：零依赖纯逻辑（Node 20）
+$ docker exec -w /workspace hermes-pet-dev node --test tests/
+...
+1..92
+# tests 92
+# suites 0
+# pass 92
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 222.059539
+
+# 容器：语法体检
+$ docker exec -w /workspace hermes-pet-dev sh -c 'for f in src/main.js src/preload.js src/core/*.js src/adapters/*.js src/renderer/*.js tools/selfcheck.js; do node --check "$f" || exit 1; done; echo ALL_JS_SYNTAX_OK'
+ALL_JS_SYNTAX_OK
+
+# 宿主：GUI 冒烟（新增两个看门狗字段为 true，退出码 0）
+PS> npx electron . --smoke-test
+[hermes-pet] 已启动，adapter = hermes-gateway ；userData = C:\Users\王嘉仪\AppData\Roaming\hermes-pet
+[hermes-pet] 穿透重断言： did-navigate
+[hermes-pet] 穿透重断言： did-finish-load
+[hermes-pet] 窗口就绪：baseBounds = {"x":1272,"y":684,"width":144,"height":144} ；win.getBounds() = {"x":1272,"y":684,"width":144,"height":144} ；主屏 = {"size":{"width":1440,"height":900},"workArea":{"x":0,"y":0,"width":1440,"height":852},"scaleFactor":2}
+SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true}
+exit code = 0
+
+# 宿主：深度自检（回归护栏，本轮未改交互链路，仍全绿）
+PS> npx electron . --self-check
+SELFCHECK_OK 18/18
+```
+
+新增 6 条用例（86 -> 92，全在 `tests/window-guards.test.js`）：常数与 §6 对齐 1 条、`shouldReassertTopmost` 4 种组合 1 条 + 8 种布尔组合穷举 1 条 + 缺参 1 条、`watchdogAction` 8 种布尔组合穷举 1 条 + 缺参/真值 `lastInteractive` 一律 `noop` 1 条。
+
+**一处说明**：冒烟日志里的两条 `穿透重断言： did-navigate / did-finish-load` 就是 FIX-B 第 2 条（页面加载后立刻重断言）在真实运行中的现场证据 —— 正常启动也会走这条路，不是异常。

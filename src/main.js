@@ -13,6 +13,7 @@ const position = require('./core/position');
 const scheduler = require('./core/scheduler');
 const replies = require('./core/replies');
 const { createReplyService } = require('./adapters');
+const windowGuard = require('./core/window-guards');
 
 const SMOKE_TEST = process.argv.indexOf('--smoke-test') >= 0;
 const SELF_CHECK = process.argv.indexOf('--self-check') >= 0;
@@ -61,9 +62,12 @@ let deepNightTimer = null;
 let breakTimer = null;
 let breakUntil = 0;
 let smokeTimer = null;
+let topmostWatchdog = null;
+let ignoreWatchdog = null;
 let rendererReport = null;
 let selfCheckActive = false;
 let ignoreMouseActive = true;
+let lastInteractive = false; // 渲染进程最近一次报的「有没有命中交互元素」，穿透看门狗据此兜底
 let quitting = false;
 
 function log() {
@@ -272,6 +276,14 @@ function createPetWindow() {
   // 鼠标移到猫/气泡上时通过 IPC 临时关掉穿透；forward:true 保证穿透时仍能收到 mousemove。
   win.setIgnoreMouseEvents(true, { forward: true });
   ignoreMouseActive = true;
+  lastInteractive = false;
+  // 页面重载 / 跳转后 Chromium 的 forward 转发会静默失效（docs/M0-recon-github-pet.md §5.2），
+  // 这正是「透明区域又开始挡桌面点击」的现场 -> 每次页面加载完立刻重断言一次穿透。
+  ['did-finish-load', 'did-navigate', 'did-navigate-in-page'].forEach(function (channel) {
+    win.webContents.on(channel, function () {
+      reassertPassThrough(channel);
+    });
+  });
   if (SMOKE_TEST) {
     // 冒烟测试期间把渲染进程的报错原样吐到 stdout，失败时能直接看到原因
     win.webContents.on('console-message', function (event) {
@@ -610,6 +622,8 @@ function registerIpc() {
   ipcMain.on('pet:ignore-mouse', function (event, info) {
     if (!win || win.isDestroyed()) return;
     const ignore = !(info && info.ignore === false);
+    // 渲染进程每次命中变化都会报一次，主进程缓存下来给穿透看门狗用（FIX-B）。
+    lastInteractive = !ignore;
     if (ignore === ignoreMouseActive) return;
     ignoreMouseActive = ignore;
     win.setIgnoreMouseEvents(ignore, { forward: true });
@@ -702,17 +716,71 @@ function startTimers() {
   deepNightTimer = setInterval(function () {
     sendToPet('pet:deep-night', { deepNight: isDeepNight(Date.now()) });
   }, 60000);
+  // FIX-A / FIX-B：两条「环境级静默失效」看门狗，常数与依据见 src/core/window-guards.js §5.2/§6。
+  topmostWatchdog = setInterval(topmostWatchdogTick, windowGuard.TOPMOST_WATCHDOG_MS);
+  ignoreWatchdog = setInterval(ignoreWatchdogTick, windowGuard.IGNORE_WATCHDOG_MS);
 }
 
 function stopTimers() {
-  [cursorTimer, schedulerTimer, deepNightTimer, smokeTimer].forEach(function (timer) {
+  [cursorTimer, schedulerTimer, deepNightTimer, smokeTimer, topmostWatchdog, ignoreWatchdog].forEach(function (timer) {
     if (timer) clearInterval(timer);
   });
   cursorTimer = null;
   schedulerTimer = null;
   deepNightTimer = null;
   smokeTimer = null;
+  topmostWatchdog = null;
+  ignoreWatchdog = null;
   stopBreakCountdown();
+}
+
+/**
+ * 立刻重断言「默认穿透」（FIX-B）：页面加载 / 重载 / 站内跳转后调一次。
+ * 依据 docs/M0-recon-github-pet.md §5.2：Windows 上 forward 转发会在「宠物页快速重载后」静默失效。
+ * 这里刻意不看 ignoreMouseActive —— 「主进程以为穿透还开着」正是静默失效的形态，所以再调一次 API。
+ */
+function reassertPassThrough(source) {
+  if (!win || win.isDestroyed()) return;
+  lastInteractive = false;
+  win.setIgnoreMouseEvents(true, { forward: true });
+  ignoreMouseActive = true;
+  if (SMOKE_TEST) log('穿透重断言：', source);
+}
+
+/**
+ * FIX-A 置顶看门狗（5000ms）：Windows 上 alwaysOnTop 只在构造器里设一次不够，
+ * 任务栏 / 全屏窗扫过后会被压下去。5000ms 与层级 'pop-up-menu' 依据
+ * docs/M0-recon-github-pet.md §6(a) / §5.2，抄自竞品 rullerzhou-afk/clawd-on-desk 的
+ * TOPMOST_WATCHDOG_MS —— 别当成冗余定时器删掉。
+ */
+function topmostWatchdogTick() {
+  if (!win || win.isDestroyed()) return;
+  if (!windowGuard.shouldReassertTopmost({
+    isDestroyed: win.isDestroyed(),
+    isVisible: win.isVisible(),
+    paused: Boolean(state && state.paused),
+  })) {
+    return;
+  }
+  win.setAlwaysOnTop(true, windowGuard.TOPMOST_LEVEL);
+}
+
+/**
+ * FIX-B 穿透看门狗（2000ms）：setIgnoreMouseEvents(true, { forward: true }) 在 Windows 上
+ * 「宠物页快速重载 / 有全屏窗扫过」后会静默失效，且没有任何报错
+ * （docs/M0-recon-github-pet.md §5.2，实测来自竞品 OpenPetsHQ/openpets 源码注释）。
+ * 只在「最近一次没命中交互元素」时兜底重开穿透；命中了就什么都不做，否则点猫会失效。
+ */
+function ignoreWatchdogTick() {
+  if (!win || win.isDestroyed()) return;
+  const action = windowGuard.watchdogAction({
+    lastInteractive: lastInteractive,
+    isDestroyed: win.isDestroyed(),
+    visible: win.isVisible(),
+  });
+  if (action !== 'force-ignore') return;
+  win.setIgnoreMouseEvents(true, { forward: true });
+  ignoreMouseActive = true;
 }
 
 function failureText(err) {
@@ -773,8 +841,12 @@ function smokeOutcome() {
     pet: Boolean(rendererReport && rendererReport.catRendered),
     // P0-2 断言：穿透已接线，初始状态必须是 ignore=true（否则桌面会留一块看不见的挡板）
     mousePassThrough: ignoreMouseActive === true,
+    // FIX-A / FIX-B 断言：两条「环境级静默失效」看门狗已接线（第四轮）
+    topmostWatchdog: Boolean(topmostWatchdog),
+    ignoreWatchdog: Boolean(ignoreWatchdog),
   };
-  const ok = payload.window && payload.tray && payload.pet && payload.mousePassThrough;
+  const ok = payload.window && payload.tray && payload.pet && payload.mousePassThrough
+    && payload.topmostWatchdog && payload.ignoreWatchdog;
   return { ok: ok, line: (ok ? 'SMOKE_OK ' : 'SMOKE_FAIL ') + JSON.stringify(payload) };
 }
 
