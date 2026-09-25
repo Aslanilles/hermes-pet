@@ -137,6 +137,67 @@ body {
   line-height: 1.5;
 }
 
+/* ---------------- A7 快捷键区块 ---------------- */
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.shortcut-name {
+  flex: 0 0 132px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.shortcut-field {
+  flex: 0 0 auto;
+  min-width: 108px;
+  margin: 0;
+  padding: 5px 10px;
+  border: 1px solid rgba(45, 55, 72, 0.2);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.shortcut-field.is-listening {
+  border-color: var(--star-gold);
+}
+
+/* 被别的程序占用：标红 + 右侧写明，绝不静默 */
+.shortcut-field.is-occupied {
+  border-color: #e53e3e;
+  color: #c53030;
+}
+
+.shortcut-state {
+  font-size: 12px;
+  color: #c53030;
+}
+
+.shortcut-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.shortcut-foot .btn {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.shortcut-foot .hint {
+  margin: 0;
+}
+
 .panel-foot {
   display: flex;
   align-items: center;

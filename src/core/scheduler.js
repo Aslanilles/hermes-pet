@@ -16,10 +16,12 @@ const SESSION_GAP_MS = 5 * 60 * 1000; // 交互间隔 >5 分钟视为新会话
 const DRAG_SETTLE_MS = 2000; // 拖拽结束 2 秒后才允许弹气泡
 const NO_REPLY_MS = 10 * 1000; // 用户 10 秒不回应 -> 气泡自行消失
 const DRIFT_MS = 2 * 60 * 1000; // 距上次 tick 超过 2 分钟 = 刚从睡眠/挂起中醒来
+const RETURN_AFTER_ABSENCE_MS = 30 * 60 * 1000; // A6【P1-4】距上次「猫窗口内活动」>=30 分钟 = 离开了
+const LONG_SESSION_MS = 2 * 60 * 60 * 1000; // A13：连续工作 2h+ 更安静（除 break 外只做动作不开口）
 const SUNSET_HOUR = 22;
 const SUNSET_MINUTE = 30;
 
-const TRIGGERS = ['sunset', 'greeting', 'break'];
+const TRIGGERS = ['sunset', 'greeting', 'return', 'break'];
 
 function pad2(n) {
   return n < 10 ? '0' + n : String(n);
@@ -58,6 +60,7 @@ function createRuntime(now) {
     dragEndedAt: null,
     dialogueOpen: false,
     typing: false,
+    returnPending: false, // A6：>=30 分钟没动静后的「回来了」待发标记（一次性）
   };
 }
 
@@ -66,6 +69,7 @@ function normaliseRuntime(runtime, now) {
   if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime)) return base;
   const merged = Object.assign(base, runtime);
   if (!Array.isArray(merged.ignoredKinds)) merged.ignoredKinds = [];
+  merged.returnPending = merged.returnPending === true;
   return merged;
 }
 
@@ -97,6 +101,7 @@ function guardTick(now, runtime) {
         ignoredKinds: [],
         dailyCount: 0,
         dailyCountDate: day,
+        returnPending: false,
       }),
       skip: true,
       reason: 'rollback',
@@ -113,9 +118,20 @@ function guardTick(now, runtime) {
 /** 记录一次用户交互：间隔超过 5 分钟算新会话。 */
 function markActivity(runtime, now) {
   const rt = normaliseRuntime(runtime, now);
-  const gap = Number.isFinite(rt.lastActivityAt) ? now - rt.lastActivityAt : Number.POSITIVE_INFINITY;
+  const prevActivityAt = rt.lastActivityAt;
+  const gap = Number.isFinite(prevActivityAt) ? now - prevActivityAt : Number.POSITIVE_INFINITY;
   const sessionStartAt = gap > SESSION_GAP_MS || !Number.isFinite(rt.sessionStartAt) ? now : rt.sessionStartAt;
-  return Object.assign({}, rt, { lastActivityAt: now, sessionStartAt: sessionStartAt });
+  // 【P1-4】回来招呼：距上一次「猫窗口内活动」>=30 分钟 -> 置位 returnPending。
+  // 判据是「猫窗口内活动」（M0 没有全局键鼠钩子，见 HANDOFF §5），不是「期间无鼠标/键盘」。
+  // 置位**必须**在 guardTick 之后：时间回拨时 guardTick 会把 lastActivityAt 拉回 now，
+  // 这里 gap 就成了 0 -> 不置位；合盖唤醒（drift）允许置位一次 —— 「醒来后一声『回来了』」
+  // 是预期行为，不是 bug。
+  const away = Number.isFinite(prevActivityAt) && now >= prevActivityAt && gap >= RETURN_AFTER_ABSENCE_MS;
+  return Object.assign({}, rt, {
+    lastActivityAt: now,
+    sessionStartAt: sessionStartAt,
+    returnPending: away ? true : rt.returnPending,
+  });
 }
 
 function activeSessionMs(now, runtime) {
@@ -126,6 +142,15 @@ function activeSessionMs(now, runtime) {
 function idleMs(now, runtime) {
   if (!Number.isFinite(runtime.lastActivityAt)) return 0;
   return Math.max(0, now - runtime.lastActivityAt);
+}
+
+/**
+ * A13「连续工作 2h+」：sessionStartAt 起 >=2 小时，**且**近 5 分钟内还有人活动
+ * （否则「跨天后的陈旧 runtime」会被误判成连续工作 —— 那不是连续工作，是猫一天没被理）。
+ */
+function isLongSession(now, runtime) {
+  if (idleMs(now, runtime) >= SESSION_GAP_MS) return false;
+  return activeSessionMs(now, runtime) >= LONG_SESSION_MS;
 }
 
 function budgetState(now, runtime, config) {
@@ -149,11 +174,12 @@ function isIgnoredToday(runtime, day, kind) {
   return sameDay(runtime.ignoredDate, day) && runtime.ignoredKinds.indexOf(kind) >= 0;
 }
 
-/** 选出当下「到期」的候选触发源（优先级：数字日落 > 每日问候 > 休息提醒）。 */
+/** 选出当下「到期」的候选触发源（优先级：数字日落 > 每日问候 > 回来招呼 > 休息提醒）。 */
 function pickTrigger(now, runtime) {
   const day = dateKey(now);
   if (!sameDay(runtime.sunsetDate, day) && now >= sunsetTime(now)) return 'sunset';
   if (!sameDay(runtime.greetedDate, day)) return 'greeting';
+  if (runtime.returnPending) return 'return';
   if (activeSessionMs(now, runtime) >= ACTIVE_BREAK_MS) return 'break';
   return null;
 }
@@ -192,6 +218,16 @@ function plan(ctx) {
   if (!kind) return silent('nothing-due');
   if (isIgnoredToday(runtime, day, kind)) return silent('ignored-today', kind);
 
+  // 【P1-3】A13 静默：全屏 / 高速打字 / 别烦我 / 暂停 / 隐藏 / 深夜，任一为真就不开口。
+  // quietExemptKinds：深夜这一条不该把「22:30 该睡了」的数字日落一起关掉（那是**为深夜准备**的
+  // 提醒），所以 main.js 只在「安静完全由深夜一条引起」时把 sunset 放行。
+  if (context.quiet) {
+    const exempt = Array.isArray(context.quietExemptKinds) ? context.quietExemptKinds : [];
+    if (exempt.indexOf(kind) < 0) return silent('quiet', kind);
+  }
+  // A13：连续工作 2h+ 更安静 —— 除 break 外降为「只做动作（nap）、不开口」。
+  if (kind !== 'break' && isLongSession(now, runtime)) return silent('long-session', kind);
+
   const budget = budgetState(now, runtime, config);
   if (!budget.cooldownOk) return silent('cooldown', kind);
   if (!budget.dailyOk) return silent('daily-cap', kind);
@@ -212,6 +248,7 @@ function recordSpoken(runtime, now, kind) {
     greetedDate: kind === 'greeting' ? day : rt.greetedDate,
     sunsetDate: kind === 'sunset' ? day : rt.sunsetDate,
     sessionStartAt: kind === 'break' ? now : rt.sessionStartAt,
+    returnPending: false, // 说了（或做了）就消费掉「回来了」，一天不重复
   });
 }
 
@@ -221,7 +258,7 @@ function recordIgnored(runtime, now, kind) {
   const day = dateKey(now);
   const kinds = sameDay(rt.ignoredDate, day) ? rt.ignoredKinds.slice() : [];
   if (kind && kinds.indexOf(kind) < 0) kinds.push(kind);
-  return Object.assign({}, rt, { ignoredDate: day, ignoredKinds: kinds });
+  return Object.assign({}, rt, { ignoredDate: day, ignoredKinds: kinds, returnPending: false });
 }
 
 function recordDialogue(runtime, now, open) {
@@ -251,6 +288,8 @@ module.exports = {
   DRAG_SETTLE_MS,
   NO_REPLY_MS,
   DRIFT_MS,
+  RETURN_AFTER_ABSENCE_MS,
+  LONG_SESSION_MS,
   SUNSET_HOUR,
   SUNSET_MINUTE,
   TRIGGERS,
@@ -263,6 +302,7 @@ module.exports = {
   markActivity,
   activeSessionMs,
   idleMs,
+  isLongSession,
   budgetState,
   isIgnoredToday,
   pickTrigger,

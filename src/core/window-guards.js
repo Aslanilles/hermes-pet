@@ -47,11 +47,16 @@ function shouldReassertTopmost(options) {
  * 关键：lastInteractive 是「渲染进程最近一次报的命中状态」。它一旦为真值
  * （命中了猫 / 气泡，穿透此刻本应关闭），就必须 noop —— 强行重开穿透会让点猫失效。
  * 只有「命中了交互元素」之外的状态（false / 未上报）才兜底重开穿透。
+ *
+ * 【P0-1】M1 追加 dnd 维度：dnd === true（别烦我 / 透明模式）时**无视** lastInteractive，
+ * 一律 'force-ignore' —— 否则「鼠标正压在猫身上时勾上别烦我」会卡在 ignore=false 上，
+ * 点猫仍然被吃掉。dnd 缺省 / false 时 M0 的红线原样保留：lastInteractive 为真仍必须 'noop'。
  */
 function watchdogAction(options) {
   const opts = options || {};
   if (opts.isDestroyed) return 'noop';
   if (!opts.visible) return 'noop';
+  if (opts.dnd === true) return 'force-ignore';
   if (opts.lastInteractive) return 'noop';
   return 'force-ignore';
 }

@@ -20,6 +20,8 @@ const bubbleUser = document.getElementById('bubble-user');
 const bubbleNotice = document.getElementById('bubble-notice');
 const bubbleActions = document.getElementById('bubble-actions');
 const bubbleAction = document.getElementById('bubble-action');
+const bubblePin = document.getElementById('bubble-pin');
+const bubbleCopied = document.getElementById('bubble-copied');
 const composer = document.getElementById('composer');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
@@ -28,9 +30,15 @@ const SPRITE_URL = '../../data/sprites/oneko.gif';
 const FRAME_MS_DAY = 1000 / 30; // 目标 30fps
 const FRAME_MS_NIGHT = 1000 / 15; // 深夜模式动画频率减半
 const NO_REPLY_MS = 10000; // 主动气泡 10 秒无人理 -> 消失且当天不再重复
-const DOUBLE_CLICK_MS = 320;
-const DRAG_THRESHOLD_PX = 5;
+const DOUBLE_CLICK_MS = 320; // 【P2-1】保持不变，只把单击动作延迟到该窗口之后
+const DRAG_THRESHOLD_PX = 5; // A13：位移 >5px 判拖拽（不弹对话）
 const NEAR_PX = 90;
+const HOVER_DWELL_MS = 500; // A3：停猫上 >=0.5s 才看向光标（快速扫过不触发）
+const LOOK_EXIT_MS = 300; // A3：离开 0.3s 回正（debounce）
+const LONG_PRESS_MS = 1000; // A10：长按 >=1s 固定气泡
+const COPIED_BADGE_MS = 1000; // A8：「已复制」1s 淡出
+const KEYBURST_THROTTLE_MS = 60; // A13：击键上报节流（够判密度，不刷屏）
+const HISTORY_MAX = 20; // A9：输入历史栈深度
 const THINKING_DELAY_MS = 1500; // 发出去 1.5 秒还没回音就先「在想…」，别让气泡像卡死
 
 const view = {
@@ -50,6 +58,22 @@ const view = {
   dragDir: null,
   userPaused: false,
   hidden: false,
+  dnd: false, // A5：别烦我（整窗恒定穿透，渲染进程连上报都不用报 ignore:false）
+  onboarded: true, // A1：初见流程是否已走完（主进程下发；冒烟/自检里恒为 true）
+  onboardStep: null, // null | 'ask'（等用户回答）
+  walking: false, // A2：主进程正在让猫走路
+  looking: false, // A3：当前处于「看向光标」
+  pinnedBubble: false, // A10：气泡已固定（跳过 10s 超时）
+  clickTimer: null, // A13：单击动作延迟到 DOUBLE_CLICK_MS 之后
+  pinTimer: null,
+  copiedTimer: null,
+  zoomTimer: null,
+  hoverTimer: null,
+  lookExitTimer: null,
+  history: [],
+  historyIndex: -1,
+  lastKeystrokeAt: 0,
+  winOrigin: null, // 【P2-2】主进程下发的窗口原点（不用 window.screenX）
 };
 
 function setText(el, text) {
@@ -67,6 +91,8 @@ function hide(el) {
 function setDeepNight(value) {
   view.deepNight = Boolean(value);
   document.body.classList.toggle('deep-night', view.deepNight);
+  // A2：walk 的换帧节拍深夜减半（250ms -> 500ms），交给状态机去算
+  if (api.pet.setDeepNight) api.pet.setDeepNight(view.deepNight);
 }
 
 function setPaused(value) {
@@ -104,8 +130,13 @@ function applyConfig(info) {
     view.size = Number(info.config.size) || 120;
     document.documentElement.style.setProperty('--pet-size', view.size + 'px');
     document.documentElement.style.setProperty('--pet-scale', String(view.size / 32));
+    view.dnd = Boolean(info.config.dnd);
   }
   if (info.primaryAdapter) view.adapter = info.primaryAdapter;
+  if (typeof info.onboarded === 'boolean') {
+    view.onboarded = info.onboarded;
+    if (!view.onboarded) startOnboarding();
+  }
   setDeepNight(info.deepNight);
   setPaused(info.paused);
   setPinned(info.pinned);
@@ -117,6 +148,111 @@ function applyPose(pose) {
     view.reportedState = pose.state;
     document.body.setAttribute('data-pet-state', pose.state);
     api.petState(pose.state);
+  }
+}
+
+/* ---------------- A1 初见与命名（【P0-2】） ---------------- */
+
+function focusComposer() {
+  window.setTimeout(function () {
+    try {
+      input.focus();
+    } catch (err) {
+      /* 焦点失败不影响使用 */
+    }
+  }, 60);
+}
+
+/** 首启（onboarded === false）：出场就把「你叫什么名字？」问出来（全程 textContent）。 */
+function startOnboarding() {
+  if (view.onboardStep === 'ask') return;
+  view.onboardStep = 'ask';
+  playEntryAnimation(); // A1：从右边缘探出 + 左右张望 + 跳到底部中央
+  clearIgnoreTimer();
+  stopTypewriter();
+  view.bubbleKind = 'onboard';
+  hide(bubbleActions);
+  hide(bubbleNotice);
+  show(composer);
+  openBubble();
+  api.dialogue(true);
+  api.pet.send('click');
+  typeText(api.onboard.ask, measureBubble);
+  focusComposer();
+}
+
+/** A1 入场动画（CSS 关键帧，1.5s）；只跑一次，不锁死任何交互。 */
+function playEntryAnimation() {
+  document.body.classList.add('pet-entering');
+  window.setTimeout(function () {
+    document.body.classList.remove('pet-entering');
+  }, 1600);
+}
+
+function leaveOnboarding() {
+  view.onboardStep = null;
+  view.onboarded = true;
+}
+
+/* ---------------- A2 走动 / A3 悬停看向光标 ---------------- */
+
+/** 主进程是走路的唯一决策者；渲染进程只把状态机推到 walk / 回到 idle。 */
+function onWalk(info) {
+  const payload = info || {};
+  if (payload.walk) {
+    view.walking = true;
+    api.pet.send(api.pet.state() === 'walk' ? 'walk:step' : 'walk:start', payload.dir);
+    return;
+  }
+  view.walking = false;
+  api.pet.send('walk:end');
+}
+
+/**
+ * A3 悬停看向光标。【P2-2】方向必须用**主进程下发的窗口原点**（winOrigin）来算：
+ * 渲染进程的 window.screenX 会滞后于窗口真实位置（HANDOFF §13 记过），拿它算方向会偏。
+ */
+function lookDirectionFrom(point) {
+  const rect = slot.getBoundingClientRect();
+  const originX = view.winOrigin ? view.winOrigin.x : window.screenX;
+  const originY = view.winOrigin ? view.winOrigin.y : window.screenY;
+  const centerX = originX + rect.left + rect.width / 2;
+  const centerY = originY + rect.top + rect.height / 2;
+  const direction = api.petDirection
+    ? api.petDirection(point.x - centerX, point.y - centerY)
+    : null;
+  return { direction: direction, dx: point.x - centerX, dy: point.y - centerY };
+}
+
+function startLook(point) {
+  const info = lookDirectionFrom(point);
+  if (!info.direction) return false;
+  const current = api.pet.state();
+  if (current !== 'idle' && current !== 'alert') return false;
+  view.looking = true;
+  api.pet.send('look:start', info.direction);
+  return true;
+}
+
+function endLook() {
+  if (!view.looking) return;
+  view.looking = false;
+  api.pet.send('look:end');
+}
+
+/** 离开 300ms 才回正（debounce）；快速扫过（<500ms）根本不触发 look:start。 */
+function scheduleLookExit() {
+  if (view.lookExitTimer) return;
+  view.lookExitTimer = window.setTimeout(function () {
+    view.lookExitTimer = null;
+    endLook();
+  }, LOOK_EXIT_MS);
+}
+
+function cancelLookExit() {
+  if (view.lookExitTimer) {
+    clearTimeout(view.lookExitTimer);
+    view.lookExitTimer = null;
   }
 }
 
@@ -210,6 +346,7 @@ function clearIgnoreTimer() {
 }
 
 function closeBubble() {
+  setBubblePinned(false); // 气泡没了，固定态一起收掉（图钉/边框标记不残留）
   clearIgnoreTimer();
   stopTypewriter();
   view.bubbleKind = null;
@@ -226,6 +363,7 @@ function closeBubble() {
 function openDialogue(options) {
   const opts = options || {};
   clearIgnoreTimer();
+  setBubblePinned(false); // 新内容 = 新气泡：固定态不带过去
   view.bubbleKind = null;
   hide(bubbleActions);
   hide(bubbleNotice);
@@ -248,6 +386,7 @@ function openDialogue(options) {
 function showProactive(info) {
   const payload = info || {};
   const kind = payload.kind || null;
+  setBubblePinned(false);
   hide(composer);
   hide(bubbleUser);
   hide(bubbleNotice);
@@ -267,12 +406,47 @@ function showProactive(info) {
   typeText(payload.text || '', measureBubble);
   if (!payload.fromUser) {
     clearIgnoreTimer();
+    // A10：固定（长按 >=1s）时跳过 10 秒自动消失
     view.ignoreTimer = window.setTimeout(function () {
       view.ignoreTimer = null;
       api.bubbleIgnored(kind);
       closeBubble();
     }, NO_REPLY_MS);
   }
+}
+
+/* ---------------- A8 双击复制 / A10 长按固定 ---------------- */
+
+/** A10：图钉标记必须是**可辨**的（用 textContent 写，绝不用 innerHTML/insertAdjacentHTML）。 */
+function setBubblePinned(value) {
+  const next = Boolean(value);
+  view.pinnedBubble = next;
+  document.body.classList.toggle('bubble-pinned', next);
+  if (next) {
+    setText(bubblePin, '📌 已固定');
+    show(bubblePin);
+    clearIgnoreTimer(); // 固定后不再自动消失
+  } else {
+    setText(bubblePin, '');
+    hide(bubblePin);
+  }
+}
+
+/** A8：双击气泡 -> 全文进剪贴板 + 「已复制」1s 淡出（非系统通知；空文本不提示）。 */
+function copyBubbleText() {
+  const text = bubbleText.textContent || '';
+  if (!text.trim()) return;
+  api.copyText(text).then(function (result) {
+    if (!result || !result.ok) return;
+    setText(bubbleCopied, result.truncated ? '已复制（超长已截断）' : '已复制');
+    show(bubbleCopied);
+    if (view.copiedTimer) clearTimeout(view.copiedTimer);
+    view.copiedTimer = window.setTimeout(function () {
+      view.copiedTimer = null;
+      setText(bubbleCopied, '');
+      hide(bubbleCopied);
+    }, COPIED_BADGE_MS);
+  });
 }
 
 function onBreakTick(info) {
@@ -304,6 +478,12 @@ let lastClient = { x: 0, y: 0 };
 function refreshPassthrough() {
   if (dragLock) {
     api.setIgnoreMouse(false);
+    return;
+  }
+  // A5【P0-1-3】dnd 短路：别烦我开着时渲染进程也要上报一次 { ignore:true }，
+  // 好让主进程的 lastInteractive 缓存不在 dnd 期间腐烂（关掉 dnd 的瞬间不会残留旧命中态）。
+  if (view.dnd) {
+    api.setIgnoreMouse(true);
     return;
   }
   const hit = document.elementFromPoint(lastClient.x, lastClient.y);
@@ -350,6 +530,8 @@ function onPointerMove(event) {
     if (view.pinned) return;
     pointer.dragging = true;
     view.dragging = true;
+    document.body.classList.add('dragging'); // A11：按住即拖 + 立刻半透明反馈
+    endLook();
     api.pet.send('drag:start');
     api.dragStart({ x: pointer.startX, y: pointer.startY });
   }
@@ -377,6 +559,7 @@ function onPointerUp(event) {
   if (session.dragging) {
     view.dragging = false;
     view.dragDir = null;
+    document.body.classList.remove('dragging');
     api.dragEnd();
     api.pet.send('drag:end');
     return;
@@ -386,15 +569,26 @@ function onPointerUp(event) {
 
 function handleClick() {
   const now = Date.now();
-  const isDouble = now - view.lastClickAt < DOUBLE_CLICK_MS;
-  view.lastClickAt = isDouble ? 0 : now;
-  api.activity();
-  if (isDouble) {
+  if (now - view.lastClickAt < DOUBLE_CLICK_MS) {
+    // 双击：撤掉还没执行的单击动作，改开设置（A13：双击不弹对话）
+    view.lastClickAt = 0;
+    if (view.clickTimer) {
+      clearTimeout(view.clickTimer);
+      view.clickTimer = null;
+    }
     api.openSettings();
     return;
   }
-  if (composer.classList.contains('is-hidden')) openDialogue();
-  else input.focus();
+  view.lastClickAt = now;
+  api.activity();
+  // 【P2-1】DOUBLE_CLICK_MS = 320 保持不变，只把**单击动作**延迟到该窗口之后：
+  // 否则一次双击会先开对话、再开设置（M0 的误触）。
+  if (view.clickTimer) clearTimeout(view.clickTimer);
+  view.clickTimer = window.setTimeout(function () {
+    view.clickTimer = null;
+    if (composer.classList.contains('is-hidden')) openDialogue();
+    else input.focus();
+  }, DOUBLE_CLICK_MS);
 }
 
 function onContextMenu(event) {
@@ -404,16 +598,39 @@ function onContextMenu(event) {
 }
 
 function onCursor(point) {
-  if (!point || view.dragging || !window.hermes) return;
+  if (!point || !window.hermes) return;
+  // 【P2-2】主进程下发的窗口原点（权威）优先；window.screenX 只在没有它时兜底
+  if (Number.isFinite(point.winX) && Number.isFinite(point.winY)) {
+    view.winOrigin = { x: point.winX, y: point.winY };
+  }
+  if (view.dragging) return;
   const rect = slot.getBoundingClientRect();
-  const centerX = window.screenX + rect.left + rect.width / 2;
-  const centerY = window.screenY + rect.top + rect.height / 2;
+  const originX = view.winOrigin ? view.winOrigin.x : window.screenX;
+  const originY = view.winOrigin ? view.winOrigin.y : window.screenY;
+  const centerX = originX + rect.left + rect.width / 2;
+  const centerY = originY + rect.top + rect.height / 2;
   const near = Math.sqrt(Math.pow(point.x - centerX, 2) + Math.pow(point.y - centerY, 2)) <= NEAR_PX;
   const state = api.pet.state();
   if (near && (state === 'idle' || state === 'tired' || state === 'scratchSelf')) {
     api.pet.send('mouse:near');
   } else if (!near && state === 'alert') {
     api.pet.send('mouse:far');
+  }
+  // A3：停猫上持续 >=500ms 才看向光标；离开后 300ms 回正；快速扫过不触发。
+  if (near) {
+    cancelLookExit();
+    if (!view.looking && !view.hoverTimer) {
+      view.hoverTimer = window.setTimeout(function () {
+        view.hoverTimer = null;
+        startLook(point);
+      }, HOVER_DWELL_MS);
+    }
+  } else {
+    if (view.hoverTimer) {
+      clearTimeout(view.hoverTimer);
+      view.hoverTimer = null;
+    }
+    if (view.looking) scheduleLookExit();
   }
 }
 
@@ -426,6 +643,12 @@ function autosize() {
 }
 
 function closeDialogue() {
+  if (view.onboardStep === 'ask') {
+    // 跳过起名（Esc）：nickname 落「你」、onboarded=true（【P0-2-3】别留「琉斯」）
+    leaveOnboarding();
+    api.skipOnboarding();
+  }
+  setBubblePinned(false);
   input.value = '';
   autosize();
   api.typing(false);
@@ -438,6 +661,20 @@ async function submit() {
   if (!text) return;
   input.value = '';
   autosize();
+  if (view.onboardStep === 'ask') {
+    // A1：这一句是名字（空 / 拒绝词 / 正常记名都在主进程侧的纯函数里判）
+    const outcome = await api.completeOnboarding(text);
+    if (outcome && outcome.line) typeText(outcome.line, measureBubble);
+    if (outcome && outcome.done) {
+      leaveOnboarding();
+      api.activity();
+    }
+    return;
+  }
+  view.history.push(text);
+  if (view.history.length > HISTORY_MAX) view.history = view.history.slice(-HISTORY_MAX);
+  view.historyIndex = -1;
+  setBubblePinned(false);
   clearIgnoreTimer();
   hide(bubbleActions);
   hide(bubbleNotice);
@@ -490,6 +727,7 @@ bubbleAction.addEventListener('click', function () {
 
 input.addEventListener('input', function () {
   const hasText = input.value.length > 0;
+  view.historyIndex = -1;
   api.typing(hasText);
   if (hasText) {
     api.pet.send('typing:start');
@@ -497,6 +735,15 @@ input.addEventListener('input', function () {
   }
   autosize();
 });
+
+/* A9：输入框为空时按 ↑ 回填上一条（连续 ↑ 更早）；非空不劫持。 */
+function recallHistory() {
+  if (!view.history.length) return;
+  const index = view.historyIndex < 0 ? view.history.length - 1 : Math.max(0, view.historyIndex - 1);
+  view.historyIndex = index;
+  input.value = view.history[index];
+  autosize();
+}
 
 input.addEventListener('focus', function () {
   setDragLock(true);
@@ -507,15 +754,88 @@ input.addEventListener('blur', function () {
 });
 
 input.addEventListener('keydown', function (event) {
+  // A13：把击键上报给主进程（只判密度，不记内容）—— 高速打字时猫闭嘴
+  const now = Date.now();
+  if ((event.key && event.key.length === 1) || event.key === 'Backspace') {
+    if (now - view.lastKeystrokeAt > KEYBURST_THROTTLE_MS) {
+      view.lastKeystrokeAt = now;
+      api.keystroke();
+    }
+  }
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     submit();
+    return;
+  }
+  if (event.key === 'ArrowUp' && !input.value) {
+    event.preventDefault();
+    recallHistory();
     return;
   }
   if (event.key === 'Escape') {
     event.preventDefault();
     closeDialogue();
   }
+});
+
+/* ---------------- A4 滚轮缩放（只在猫身上） ---------------- */
+
+function onWheel(event) {
+  if (view.dnd || view.dragging) return; // A5：dnd 下滚轮也穿透；拖拽中不缩放
+  const target = event.target;
+  if (target && target.closest && target.closest('#bubble, #composer, input, textarea')) return;
+  if (document.activeElement === input && !bubble.classList.contains('is-hidden')) return;
+  event.preventDefault();
+  const delta = event.deltaY < 0 ? 1 : -1;
+  const next = api.zoomSize(view.size, delta);
+  if (next === view.size) return;
+  // 即时生效（本地先反映），落盘走 100ms debounce：连滚 3 次只写一次盘
+  view.size = next;
+  document.documentElement.style.setProperty('--pet-size', next + 'px');
+  document.documentElement.style.setProperty('--pet-scale', String(next / 32));
+  if (view.zoomTimer) clearTimeout(view.zoomTimer);
+  view.zoomTimer = window.setTimeout(function () {
+    view.zoomTimer = null;
+    api.setConfig({ size: view.size });
+  }, 100);
+}
+
+/* ---------------- A8 双击气泡复制 ---------------- */
+
+bubble.addEventListener('dblclick', function (event) {
+  event.preventDefault();
+  copyBubbleText();
+});
+
+/* ---------------- A10 长按气泡固定 ---------------- */
+
+let bubblePress = null;
+
+function cancelBubblePress() {
+  if (bubblePress) {
+    clearTimeout(bubblePress);
+    bubblePress = null;
+  }
+}
+
+bubble.addEventListener('mousedown', function (event) {
+  if (event.button !== 0) return;
+  cancelBubblePress();
+  bubblePress = window.setTimeout(function () {
+    bubblePress = null;
+    setBubblePinned(!view.pinnedBubble); // 长按 >=1s 固定；再长按解除
+  }, LONG_PRESS_MS);
+});
+
+bubble.addEventListener('mouseup', cancelBubblePress);
+bubble.addEventListener('mouseleave', cancelBubblePress);
+
+/* Esc 只在**猫窗口聚焦时**生效（渲染进程局部监听，绝不注册全局 Esc） */
+document.addEventListener('keydown', function (event) {
+  if (event.key !== 'Escape' || event.defaultPrevented) return;
+  if (bubble.classList.contains('is-hidden')) return;
+  event.preventDefault();
+  closeDialogue(); // closeDialogue 内部已处理「跳过起名」与「解除固定」
 });
 
 sendBtn.addEventListener('click', function () {
@@ -546,8 +866,18 @@ api.onBreakTick(function (info) {
   onBreakTick(info);
 });
 
+api.onWalk(function (info) {
+  onWalk(info);
+});
+
 api.onWindowShift(function (shift) {
   applyWindowShift(shift);
+});
+
+api.onShortcuts(function (info) {
+  // A7：被占用的快捷键要在设置面板标红；气泡这里只留一条可见提示，不打扰
+  const occupied = (info && info.occupied) || {};
+  view.occupiedShortcuts = Object.keys(occupied);
 });
 
 api.onPetCommand(function (info) {
@@ -576,6 +906,9 @@ async function init() {
   window.requestAnimationFrame(loop);
   slot.addEventListener('mousedown', onPointerDown);
   slot.addEventListener('contextmenu', onContextMenu);
+  // A4：只在猫身上滚轮缩放（passive:false 才能 preventDefault 掉页面滚动）
+  slot.addEventListener('wheel', onWheel, { passive: false });
+  cat.addEventListener('wheel', onWheel, { passive: false });
   slot.addEventListener('dragstart', function (event) {
     event.preventDefault();
   });

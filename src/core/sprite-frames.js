@@ -50,6 +50,9 @@
   //   talk   -> alert（竖耳、胡须张开、面向观众 = 正在开口）
   //   listen -> idle （坐定面向观众 = 在听）
   //   drag   -> SE / SW（侧向挣扎 2 帧；拖动时按位移方向选，见 spriteForDrag）
+  //   walk   -> 8 方向组（N/NE/E/SE/S/SW/W/NW，每组 2 帧交替；按运动方向选，见 spriteForWalk）
+  //   look   -> 同一批 8 方向组（只取第 0 帧，单帧；方向 = 猫中心 -> 光标，见 spriteForLook）
+  // walk / look 的默认组写 'S'（无位移时面朝观众），与 DIRECTION_DEFAULT 保持一致。
   const STATE_SPRITES = {
     idle: 'idle',
     alert: 'alert',
@@ -59,10 +62,30 @@
     talk: 'alert',
     listen: 'idle',
     drag: 'SE',
+    walk: 'S',
+    look: 'S',
   };
 
-  const PET_STATES = ['idle', 'alert', 'tired', 'sleeping', 'scratchSelf', 'talk', 'listen', 'drag'];
+  const PET_STATES = ['idle', 'alert', 'tired', 'sleeping', 'scratchSelf', 'talk', 'listen', 'drag', 'walk', 'look'];
   const SPRITE_NAMES = Object.keys(SPRITE_SETS);
+
+  // 8 向：直接复用映射表里的 N/NE/E/SE/S/SW/W/NW 八组，不自创索引。
+  // 屏幕坐标约定：x 向右为正，y **向下**为正（与 Electron / DOM 一致）。
+  const DIRECTIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const DIRECTION_DEFAULT = 'S'; // 无位移（光标就在猫身上）时面朝观众
+  const DIAG = Math.SQRT1_2; // 1/√2
+  const DIRECTION_VECTORS = {
+    N: [0, -1],
+    NE: [DIAG, -DIAG],
+    E: [1, 0],
+    SE: [DIAG, DIAG],
+    S: [0, 1],
+    SW: [-DIAG, DIAG],
+    W: [-1, 0],
+    NW: [-DIAG, -DIAG],
+  };
+  // atan2 扇区 -> 方向。扇区 0 = +x（正右 = E），扇区号随角度增大顺时针走（屏幕 y 向下）。
+  const SECTOR_ORDER = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
 
   function hasSprite(name) {
     return Object.prototype.hasOwnProperty.call(SPRITE_SETS, name);
@@ -120,6 +143,41 @@
     return direction === 'W' ? 'SW' : 'SE';
   }
 
+  function isDirection(value) {
+    return DIRECTIONS.indexOf(value) >= 0;
+  }
+
+  function directionVector(direction) {
+    return DIRECTION_VECTORS[isDirection(direction) ? direction : DIRECTION_DEFAULT];
+  }
+
+  /**
+   * 8 向量化（A2 走路 / A3 悬停共用）。边界钉死：按 45° 扇区量化，
+   * 分界正好落在 ±22.5° / ±67.5°（Math.round 的 0.5 向上取整，正负对称）：
+   *   (1,0)->E   (0,1)->S   (-1,0)->W   (0,-1)->N
+   *   (1,1)->SE  (-1,1)->SW (1,-1)->NE  (-1,-1)->NW
+   *   (10,4)->E（21.8° < 22.5°）   (10,5)->SE（26.6° > 22.5°）
+   * 无位移 (0,0) -> 'S'（面朝观众，不抛错）。
+   */
+  function direction8(dx, dy) {
+    const x = Number.isFinite(dx) ? dx : 0;
+    const y = Number.isFinite(dy) ? dy : 0;
+    if (x === 0 && y === 0) return DIRECTION_DEFAULT;
+    const sector = Math.round(Math.atan2(y, x) / (Math.PI / 4)); // -4..4
+    const index = ((sector % 8) + 8) % 8;
+    return SECTOR_ORDER[index];
+  }
+
+  /** walk 用：按运动方向取 8 方向组（每组 2 帧交替，换帧由状态机节拍决定）。 */
+  function spriteForWalk(direction) {
+    return isDirection(direction) ? direction : DIRECTION_DEFAULT;
+  }
+
+  /** look 用：与 walk 同一批方向组，但只取第 0 帧（单帧，见 state-machine 的 look 分支）。 */
+  function spriteForLook(direction) {
+    return spriteForWalk(direction);
+  }
+
   return {
     SPRITE_CELL,
     SHEET_COLUMNS,
@@ -130,6 +188,9 @@
     SPRITE_NAMES,
     STATE_SPRITES,
     PET_STATES,
+    DIRECTIONS,
+    DIRECTION_DEFAULT,
+    DIRECTION_VECTORS,
     hasSprite,
     spriteAt,
     spritePosition,
@@ -137,6 +198,11 @@
     frameCount,
     spriteForState,
     spriteForDrag,
+    isDirection,
+    direction8,
+    directionVector,
+    spriteForWalk,
+    spriteForLook,
     normaliseFrame,
   };
 });

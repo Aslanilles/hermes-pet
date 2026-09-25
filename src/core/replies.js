@@ -1,5 +1,8 @@
 'use strict';
 
+// 名字净化与「你」这个称呼都来自 config（同一份实现，渲染/主进程/单测三处不会漂移）。
+const { normaliseUserName, ONBOARD_NICKNAME } = require('./config');
+
 /**
  * 本地 mock 语料（纯逻辑，禁止 require('electron')，可单测）。
  *
@@ -191,6 +194,20 @@ const FALLBACK_REPLIES = [
   '收到。那我们挑一件最具体的，拆解它。',
   '我记下了。你现在最想解决的是哪一块？',
 ];
+/**
+ * A1 初见与命名（【P0-2】）。猫名「琉斯」**写死在这里**，不进 config.nickname
+ * （nickname 存的是「猫对用户的称呼」）。
+ */
+const ONBOARD_LINES = {
+  ask: '你好，我是琉斯。你叫什么名字？',
+  retry: '嗯？想让我怎么叫你？',
+  decline: '没关系，那就先不叫名字…',
+  answer: function (name) {
+    return String(name || '你') + '，记住了。以后叫我琉斯就行。';
+  },
+};
+/** 拒绝词：命中就「先不叫名字」，nickname 落「你」（不审查脏话，零依赖无词典）。 */
+const DECLINE_WORDS = ['不要', '不用', '不', '算了', '随便', '不知道', '无所谓', '跳过'];
 /** 主动说话的话术。调度器只决定「该不该说」，这里决定「怎么说」。 */
 const PROACTIVE_LINES = {
   greeting: [
@@ -210,6 +227,9 @@ const PROACTIVE_LINES = {
   nap: ['我先打个盹，有事叫我。'],
   error: ['那边好像没接上，这句我自己来。'],
 };
+
+// A6「回来招呼」复用 wake 文案（不新增语气）：>=30 分钟没动静后回来说一句「回来了。」
+PROACTIVE_LINES.return = PROACTIVE_LINES.wake.slice();
 
 function normalize(text) {
   return String(text == null ? '' : text)
@@ -256,6 +276,31 @@ function formatClock(now) {
   return `${hh < 10 ? '0' + hh : hh}:${mm < 10 ? '0' + mm : mm}`;
 }
 
+/** 拒绝词判定（整句只含拒绝词也算命中，例如「不要」「算了」）。 */
+function isDeclineName(text) {
+  const value = String(text == null ? '' : text).trim();
+  if (!value) return false;
+  return DECLINE_WORDS.some(function (word) {
+    return value.indexOf(word) >= 0;
+  });
+}
+
+/**
+ * A1 起名一问一答的纯逻辑（主进程 onboard:complete 走它，单测直接钉）：
+ * - 空 / 纯空白 -> retry（继续等，onboarded 不变）
+ * - 拒绝词     -> decline（nickname = '你'、onboarded = true）
+ * - 其余       -> accept（nickname = 净化 + 截断 24 字后的名字）
+ * 净化顺序固定走 config.normaliseUserName（先去控制字符 -> trim -> 截断 24 字）。
+ */
+function resolveOnboarding(text) {
+  const name = normaliseUserName(text);
+  if (!name) return { action: 'retry', nickname: null, onboarded: false, line: ONBOARD_LINES.retry };
+  if (isDeclineName(name)) {
+    return { action: 'decline', nickname: ONBOARD_NICKNAME, onboarded: true, line: ONBOARD_LINES.decline };
+  }
+  return { action: 'accept', nickname: name, onboarded: true, line: ONBOARD_LINES.answer(name) };
+}
+
 /** 主动气泡文案。kind: greeting | break | sunset | wake | nap | error */
 function proactiveLine(kind, options) {
   const opts = options || {};
@@ -273,10 +318,14 @@ module.exports = {
   KEYWORD_RULES,
   FALLBACK_REPLIES,
   PROACTIVE_LINES,
+  ONBOARD_LINES,
+  DECLINE_WORDS,
   normalize,
   pick,
   fill,
   matchReply,
   proactiveLine,
   formatClock,
+  isDeclineName,
+  resolveOnboarding,
 };

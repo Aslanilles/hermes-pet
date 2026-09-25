@@ -15,6 +15,122 @@ function tmpFile(name) {
   return path.join(tmpDir(), name || 'config.json');
 }
 
+test('A4 滚轮缩放：120 -> 132 -> 145 -> 159，到界不再动（60 / 180）', () => {
+  assert.equal(C.zoomSize(120, 1), 132);
+  assert.equal(C.zoomSize(132, 1), 145);
+  assert.equal(C.zoomSize(145, 1), 159);
+  assert.equal(C.zoomSize(159, 1), 175);
+  assert.equal(C.zoomSize(180, 1), 180);
+  assert.equal(C.zoomSize(200, 1), C.SIZE_MAX);
+  assert.equal(C.zoomSize(120, -1), 108);
+  assert.equal(C.zoomSize(60, -1), 60);
+  assert.equal(C.zoomSize(10, -1), C.SIZE_MIN);
+  // delta >= 0 一律当放大（滚轮向上）
+  assert.equal(C.zoomSize(120, 0), 132);
+  // 脏值先回落默认再缩放
+  assert.equal(C.zoomSize('abc', 1), C.clampSize(C.SIZE_DEFAULT * 1.1));
+});
+
+test('A1 名字净化：先去控制字符 -> trim -> 截断 24 字（顺序写死）', () => {
+  assert.equal(C.normaliseUserName('  嘉仪  '), '嘉仪');
+  assert.equal(C.normaliseUserName('嘉\u0000仪\r\n'), '嘉仪');
+  assert.equal(C.normaliseUserName('a'.repeat(30)).length, 24);
+  // 顺序证据：控制字符先被删掉，截断不会把它们算进 24 字
+  assert.equal(C.normaliseUserName('\t' + 'b'.repeat(30) + '\n').length, 24);
+  // 空 / 纯空白 / 非字符串 -> 空串（起名流程靠这个区分「用户还没输入」）
+  assert.equal(C.normaliseUserName('   '), '');
+  assert.equal(C.normaliseUserName(null), '');
+  assert.equal(C.normaliseUserName(undefined), '');
+  assert.equal(C.normaliseUserName(123), '');
+  // 回归：迁移逻辑不许下沉进 coerceNickname（'  琉斯  ' 仍回落 '琉斯'）
+  assert.equal(C.coerceConfig({ nickname: '  琉斯  ' }).nickname, '琉斯');
+  assert.equal(C.coerceConfig({ nickname: '   ' }).nickname, C.NICKNAME_DEFAULT);
+});
+
+test('A7 快捷键校验：合法保留 / 缺项或非法整项回落默认 / 四键撞车也回落默认', () => {
+  const custom = C.coerceShortcuts({ toggle: 'Ctrl+Alt+H', chat: 'Alt+T', settings: 'Alt+S', mute: 'Alt+M' });
+  assert.equal(custom.toggle, 'Ctrl+Alt+H');
+  assert.equal(custom.chat, 'Alt+T');
+  // 缺项补默认
+  assert.deepEqual(C.coerceShortcuts({ toggle: 'Alt+H' }), C.DEFAULT_SHORTCUTS);
+  // 非法绑定：没有修饰键 / 单键 / Esc（Esc 绝不进全局）/ 空
+  assert.equal(C.isValidShortcut('H'), false);
+  assert.equal(C.isValidShortcut('Escape'), false);
+  assert.equal(C.isValidShortcut('Alt+Escape'), false);
+  assert.equal(C.isValidShortcut('Alt+'), false);
+  assert.equal(C.isValidShortcut(''), false);
+  assert.equal(C.isValidShortcut(null), false);
+  assert.equal(C.isValidShortcut('Alt+F9'), true);
+  assert.equal(C.isValidShortcut('Ctrl+Shift+Space'), true);
+  assert.deepEqual(C.coerceShortcuts({ toggle: 'H', chat: 'Alt+T', settings: 'Alt+S', mute: 'Alt+M' }), C.DEFAULT_SHORTCUTS);
+  // 撞车：两项绑同一个键 -> 整项回落默认（宁可回到 Alt+H，也不留按不出来的键）
+  assert.deepEqual(C.coerceShortcuts({ toggle: 'Alt+X', chat: 'Alt+X', settings: 'Alt+S', mute: 'Alt+M' }), C.DEFAULT_SHORTCUTS);
+  // 四键默认值本身必须合法
+  C.SHORTCUT_KEYS.forEach(function (key) {
+    assert.equal(C.isValidShortcut(C.DEFAULT_SHORTCUTS[key]), true, key);
+  });
+  assert.deepEqual(C.SHORTCUT_KEYS, ['toggle', 'chat', 'settings', 'mute']);
+  assert.equal(C.DEFAULT_CONFIG.dnd, false);
+  assert.equal(C.DEFAULT_STATE.onboarded, false);
+  assert.equal(C.SCHEMA_VERSION, 2);
+});
+
+test('A1【P0-2】migrateConfig 四场景：旧语义残留 / 自定义名 / 已 onboarded / 已是新版本', () => {
+  // ① schemaVersion 1 + 琉斯 + state 里没有 onboarded -> 判「旧语义残留」
+  const legacy = C.migrateConfig({ schemaVersion: 1, nickname: '琉斯' }, {});
+  assert.equal(legacy.changed, true);
+  assert.equal(legacy.reason, 'legacy-nickname');
+  assert.equal(legacy.config.nickname, '你');
+  assert.equal(legacy.config.nickname, C.ONBOARD_NICKNAME);
+  assert.equal(legacy.config.schemaVersion, 2);
+  assert.equal(legacy.state.onboarded, false);
+  // 没有 state.json（rawState = null）同样按「没有 onboarded」处理
+  assert.equal(C.migrateConfig({ schemaVersion: 1, nickname: '琉斯' }, null).reason, 'legacy-nickname');
+  // 缺 schemaVersion 字段的老文件也算旧
+  assert.equal(C.migrateConfig({ nickname: '琉斯' }, {}).reason, 'legacy-nickname');
+
+  // ② 用户改过名字 -> 只升版本，绝不动名字
+  const custom = C.migrateConfig({ schemaVersion: 1, nickname: '嘉仪' }, {});
+  assert.equal(custom.changed, true);
+  assert.equal(custom.reason, 'schema-version');
+  assert.equal(custom.config.nickname, '嘉仪');
+  assert.equal(custom.config.schemaVersion, 2);
+
+  // ③ state 里已经有 onboarded 字段 -> 名字不许被冲掉
+  const onboarded = C.migrateConfig({ schemaVersion: 1, nickname: '琉斯' }, { onboarded: true });
+  assert.equal(onboarded.reason, 'schema-version');
+  assert.equal(onboarded.config.nickname, '琉斯');
+
+  // ④ 已是新版本 -> changed=false（调用方不写盘）
+  const current = C.migrateConfig({ schemaVersion: 2, nickname: '琉斯' }, {});
+  assert.equal(current.changed, false);
+  assert.equal(current.reason, 'current');
+  assert.equal(current.config.nickname, '琉斯');
+});
+
+test('loadConfig / ensureConfig 接迁移：旧语义残留会被落盘改写（名字 + onboarded）', () => {
+  const dir = tmpDir();
+  const file = path.join(dir, 'config.json');
+  const statePath = path.join(dir, 'state.json');
+  fs.writeFileSync(file, JSON.stringify({ schemaVersion: 1, nickname: '琉斯', size: 150 }), 'utf8');
+  fs.writeFileSync(statePath, JSON.stringify({ paused: false }), 'utf8');
+  const loaded = C.loadConfig(file, statePath);
+  assert.equal(loaded.nickname, '你');
+  assert.equal(loaded.size, 150, '迁移只动名字，其余字段原样');
+  assert.equal(loaded.schemaVersion, 2);
+  // ensureConfig 把迁移结果写回盘（否则每次启动都要重判，设置面板还显示旧值）
+  const ensured = C.ensureConfig(file, statePath);
+  assert.equal(ensured.nickname, '你');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).nickname, '你');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).schemaVersion, 2);
+  assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).onboarded, false);
+  // 迁移完再判一次：changed=false（不重复写盘）
+  assert.equal(C.migrateConfig(C.readJsonSafe(file), C.readJsonSafe(statePath)).changed, false);
+  // 全新用户（文件不存在）不许被误判成旧语义残留
+  const fresh = path.join(dir, 'fresh.json');
+  assert.deepEqual(C.ensureConfig(fresh, path.join(dir, 'fresh-state.json')).nickname, C.NICKNAME_DEFAULT);
+});
+
 test('默认值合并：缺字段补默认值，未知字段丢弃', () => {
   const merged = C.coerceConfig({ nickname: '嘉仪' });
   assert.equal(merged.nickname, '嘉仪');

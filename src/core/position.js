@@ -12,6 +12,10 @@
 
 const EDGE_MARGIN = 24; // 默认落点距 workArea 右下角的留白
 const MIN_VISIBLE = 48; // 恢复 / 拖拽后至少留多少像素在屏幕里
+const SNAP_THRESHOLD = 20; // A6：距屏幕边缘 <=20px 松手即吸附
+const SNAP_BREATHE = 4; // A6：吸附后留 4px 呼吸缝（贴边但不贴死）
+// A6 多边并列时的优先级，写死：左 > 右 > 上 > 下
+const SNAP_PRIORITY = ['left', 'right', 'top', 'bottom'];
 
 function isFiniteNumber(value) {
   return typeof value === 'number' && Number.isFinite(value);
@@ -106,9 +110,59 @@ function fitInside(rect, workArea) {
   };
 }
 
+/** 窗口四条边到 workArea 四条边的距离（正数 = 在屏内，负数 = 已经出屏多少）。 */
+function edgeDistances(bounds, workArea) {
+  return {
+    left: bounds.x - workArea.x,
+    right: workArea.x + workArea.width - (bounds.x + bounds.width),
+    top: bounds.y - workArea.y,
+    bottom: workArea.y + workArea.height - (bounds.y + bounds.height),
+  };
+}
+
+/**
+ * A6 边缘吸附（【P0-5】）。
+ * 判据写死：窗口四边到 workArea 四边的距离取**最小**；最小距离 <= threshold 就贴该边并留
+ * breathe = 4px；并列时优先级 **左 > 右 > 上 > 下**；没贴边就原样返回（idempotent）。
+ * 只动命中的那一条边（另一个轴保持不变）——「贴哪条边回哪条边」，不制造二次位移。
+ *
+ * 注意：调用方必须保证坐标是 **DIP**（逻辑像素），且吸附只在「完整在屏内」的窗口上判
+ * （drag-end 顺序 clampFullyInside -> snapToEdge -> clampFullyInside 兜底）。
+ * 返回矩形额外带 `edge`（命中的边，未命中为 null），只用于日志 / 自证门。
+ */
+function snapToEdge(bounds, workArea, threshold, breathe) {
+  const limit = isFiniteNumber(threshold) ? threshold : SNAP_THRESHOLD;
+  const gap = isFiniteNumber(breathe) ? breathe : SNAP_BREATHE;
+  const rect = {
+    x: Math.round(bounds.x),
+    y: Math.round(bounds.y),
+    width: Math.round(bounds.width),
+    height: Math.round(bounds.height),
+  };
+  const dist = edgeDistances(rect, workArea);
+  const min = Math.min(dist.left, dist.right, dist.top, dist.bottom);
+  if (!(min <= limit)) return { x: rect.x, y: rect.y, width: rect.width, height: rect.height, edge: null };
+  let edge = SNAP_PRIORITY[0];
+  for (let i = 0; i < SNAP_PRIORITY.length; i += 1) {
+    const side = SNAP_PRIORITY[i];
+    if (Math.abs(dist[side] - min) < 1e-9) {
+      edge = side;
+      break;
+    }
+  }
+  if (edge === 'left') rect.x = workArea.x + gap;
+  else if (edge === 'right') rect.x = workArea.x + workArea.width - rect.width - gap;
+  else if (edge === 'top') rect.y = workArea.y + gap;
+  else rect.y = workArea.y + workArea.height - rect.height - gap;
+  return { x: Math.round(rect.x), y: Math.round(rect.y), width: rect.width, height: rect.height, edge: edge };
+}
+
 module.exports = {
   EDGE_MARGIN,
   MIN_VISIBLE,
+  SNAP_THRESHOLD,
+  SNAP_BREATHE,
+  SNAP_PRIORITY,
   isFiniteNumber,
   readCoord,
   isOriginSentinel,
@@ -117,4 +171,6 @@ module.exports = {
   defaultBounds,
   restoreBounds,
   fitInside,
+  edgeDistances,
+  snapToEdge,
 };

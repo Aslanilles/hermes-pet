@@ -32,8 +32,41 @@
       </section>
 
       <section class='group'>
-        <label class='toggle'><input id='proactive' type='checkbox' /><span>主动提醒</span></label>
-        <p class='hint'>每天早上问候、连续活跃 40 分钟提醒休息、22:30 数字日落。关掉之后它只在你找它时说话。</p>
+        <label class='toggle'><input id='proactive' type='checkbox' /><span>静音（不主动说话）</span></label>
+        <p class='hint'>勾上 = 它只在你找它时开口（Alt+M 也能切）。平时它会每天早上问候、连续活跃 40 分钟提醒休息、22:30 数字日落。</p>
+      </section>
+
+      <section class='group'>
+        <label class='toggle'><input id='dnd' type='checkbox' /><span>别烦我 / 透明模式</span></label>
+        <p class='hint'>开启后整窗恒定穿透：点击全部落到桌面（那段时间猫也点不动、拖不动）。猫仍会呼吸、仍会看向光标，但不再走动、不主动说话。</p>
+      </section>
+
+      <section class='group'>
+        <span class='label'>快捷键</span>
+        <div class='shortcut-row'>
+          <span class='shortcut-name'>显示 / 隐藏</span>
+          <button id='sc-toggle' class='field shortcut-field' type='button' data-action='toggle'>Alt+H</button>
+          <span id='sc-toggle-state' class='shortcut-state'></span>
+        </div>
+        <div class='shortcut-row'>
+          <span class='shortcut-name'>打开对话</span>
+          <button id='sc-chat' class='field shortcut-field' type='button' data-action='chat'>Alt+T</button>
+          <span id='sc-chat-state' class='shortcut-state'></span>
+        </div>
+        <div class='shortcut-row'>
+          <span class='shortcut-name'>打开设置</span>
+          <button id='sc-settings' class='field shortcut-field' type='button' data-action='settings'>Alt+S</button>
+          <span id='sc-settings-state' class='shortcut-state'></span>
+        </div>
+        <div class='shortcut-row'>
+          <span class='shortcut-name'>静音（不主动说话）</span>
+          <button id='sc-mute' class='field shortcut-field' type='button' data-action='mute'>Alt+M</button>
+          <span id='sc-mute-state' class='shortcut-state'></span>
+        </div>
+        <div class='shortcut-foot'>
+          <button id='shortcuts-reset' class='btn' type='button'>恢复默认</button>
+          <span id='shortcuts-hint' class='hint'>点一下右边的按键再按下组合键即可改键；被别的程序占用的会标红。</span>
+        </div>
       </section>
 
       <section class='group'>

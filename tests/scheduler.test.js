@@ -19,6 +19,86 @@ function plan(now, runtime, extra) {
   return S.plan(Object.assign({ now: now, config: { proactiveEnabled: true }, runtime: runtime, state: 'idle' }, extra || {}));
 }
 
+test('A6 回来招呼：缺席 >=30 分钟置位 returnPending；2 分钟不置位；回拨不置位', () => {
+  const t0 = at(9, 0);
+  const rt = S.createRuntime(t0);
+  assert.equal(S.markActivity(rt, t0 + 2 * MIN).returnPending, false);
+  assert.equal(S.markActivity(rt, t0 + 31 * MIN).returnPending, true);
+  assert.equal(S.RETURN_AFTER_ABSENCE_MS, 30 * MIN);
+  // 时间回拨：guardTick 把基准拉回 now，markActivity 的 gap 归零 -> 不许置位
+  const back = t0 - 60 * MIN;
+  const rollback = S.guardTick(back, rt);
+  assert.equal(rollback.reason, 'rollback');
+  assert.equal(rollback.skip, true);
+  assert.equal(rollback.runtime.returnPending, false);
+  assert.equal(S.markActivity(rollback.runtime, back).returnPending, false);
+  // 跨天重置：回拨分支把计数与各种哨兵全部清零
+  const stale = Object.assign({}, rt, { returnPending: true, dailyCount: 3, dailyCountDate: S.dateKey(back) });
+  const reset = S.guardTick(t0 - 24 * 60 * MIN, stale);
+  assert.equal(reset.reason, 'rollback');
+  assert.equal(reset.runtime.returnPending, false);
+  assert.equal(reset.runtime.dailyCount, 0);
+});
+
+test('pickTrigger 优先级 sunset > greeting > return > break；说了 / 忽略了都消费 returnPending', () => {
+  const now = at(23, 0); // 过了 22:30 的数字日落
+  const rt = Object.assign({}, S.createRuntime(now), { returnPending: true, sessionStartAt: now - 3 * 60 * MIN });
+  assert.deepEqual(S.TRIGGERS, ['sunset', 'greeting', 'return', 'break']);
+  assert.equal(S.pickTrigger(now, rt), 'sunset');
+  const greeted = Object.assign({}, rt, { sunsetDate: S.dateKey(now) });
+  assert.equal(S.pickTrigger(now, greeted), 'greeting');
+  const returned = Object.assign({}, greeted, { greetedDate: S.dateKey(now) });
+  assert.equal(S.pickTrigger(now, returned), 'return');
+  const broke = Object.assign({}, returned, { returnPending: false });
+  assert.equal(S.pickTrigger(now, broke), 'break');
+  assert.equal(S.pickTrigger(now, Object.assign({}, broke, { sessionStartAt: now })), null);
+  // 消费：说了 / 没回应，回来招呼都不再重复（一天一次）
+  assert.equal(S.recordSpoken(returned, now, 'return').returnPending, false);
+  assert.equal(S.recordIgnored(returned, now, 'return').returnPending, false);
+});
+
+test('A13 quiet 接线：quiet 为真一律不开口，quietExemptKinds 只放行白名单', () => {
+  const now = at(23, 0);
+  const rt = baseRuntime(now); // greetedDate = 今天 -> 当下候选只剩 sunset
+  const blocked = plan(now, rt, { quiet: true });
+  assert.equal(blocked.speak, false);
+  assert.equal(blocked.reason, 'quiet');
+  assert.equal(blocked.kind, 'sunset');
+  // 白名单放行 sunset（它本来就是「为深夜准备」的提醒）
+  const exempt = plan(now, rt, { quiet: true, quietExemptKinds: ['sunset'] });
+  assert.equal(exempt.speak, true);
+  assert.equal(exempt.kind, 'sunset');
+  // 白名单里没有的候选照样闭麦
+  const other = plan(now, rt, { quiet: true, quietExemptKinds: ['greeting'] });
+  assert.equal(other.speak, false);
+  assert.equal(other.reason, 'quiet');
+  // quiet 缺省时行为不变（不误伤）
+  assert.equal(plan(now, rt).speak, true);
+});
+
+test('A13 2h 降档：连续工作 >=2h 后除 break 外不开口；陈旧 runtime 不算连续工作', () => {
+  const now = at(15, 0);
+  const long = Object.assign({}, baseRuntime(now), {
+    sessionStartAt: now - 3 * 60 * MIN,
+    lastActivityAt: now - MIN,
+    returnPending: true,
+  });
+  assert.equal(S.LONG_SESSION_MS, 2 * 60 * MIN);
+  assert.equal(S.isLongSession(now, long), true);
+  const decision = plan(now, long);
+  assert.equal(decision.kind, 'return');
+  assert.equal(decision.speak, false);
+  assert.equal(decision.reason, 'long-session');
+  // break 是例外：连续工作越久越该提醒休息（这条本来就是给长会话准备的）
+  const breaky = Object.assign({}, baseRuntime(now), { sessionStartAt: now - 3 * 60 * MIN, lastActivityAt: now - MIN });
+  const breakPlan = plan(now, breaky);
+  assert.equal(breakPlan.kind, 'break');
+  assert.equal(breakPlan.speak, true);
+  // 陈旧 runtime（一天没人理）：近 5 分钟没活动 -> 不算连续工作
+  const stale = Object.assign({}, baseRuntime(now), { sessionStartAt: now - 5 * 60 * MIN, lastActivityAt: now - 60 * MIN });
+  assert.equal(S.isLongSession(now, stale), false);
+});
+
 test('每日问候：当天首次启动说一次，说过就不再重复', () => {
   const now = at(9, 0);
   const first = plan(now, S.createRuntime(now));

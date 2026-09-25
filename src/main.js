@@ -6,12 +6,15 @@
  */
 
 const path = require('path');
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen } = require('electron');
+const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, screen, globalShortcut, clipboard } = require('electron');
 
 const configStore = require('./core/config');
 const position = require('./core/position');
 const scheduler = require('./core/scheduler');
 const replies = require('./core/replies');
+const spriteFrames = require('./core/sprite-frames');
+const walkCore = require('./core/walk');
+const quiet = require('./core/quiet');
 const { createReplyService } = require('./adapters');
 const windowGuard = require('./core/window-guards');
 
@@ -35,6 +38,9 @@ const DEEP_NIGHT_START = 22; // 22:00-07:00
 const DEEP_NIGHT_END = 7;
 const ACTIVITY_NEAR_PX = 120; // 鼠标在猫附近移动也算「人在」
 const ACTIVITY_THROTTLE_MS = 5000;
+const SHORTCUT_DEFAULTS = configStore.DEFAULT_SHORTCUTS;
+// A7：自检/冒烟里用来验「注册成功 / 被占用降级 / 退出注销」的**不常用测试加速键**，验完立刻注销。
+const SHORTCUT_PROBE_KEYS = ['Alt+F9', 'Alt+F10'];
 
 let win = null;
 let settingsWin = null;
@@ -74,6 +80,18 @@ let ignoreMouseActive = true;
 let ignoreMouseAtStart = null;
 let lastInteractive = false; // 渲染进程最近一次报的「有没有命中交互元素」，穿透看门狗据此兜底
 let quitting = false;
+// M1-R1 A2：走动会话（walkTimer 100ms 步进 4px；走动期间不落盘，走完才 persistPosition）
+let walkTimer = null;
+let walkSession = null;
+let lastWalkEndAt = null; // 上次散步结束时刻（3 分钟硬冷却的基准）
+let cursorTrail = []; // 近 5s 光标轨迹（A2「光标安静」判定：累计位移 <=120px 才允许走）
+// M1-R1 A13：信号采集
+let keystrokes = []; // 近 3s 击键时刻（高频打字 -> quiet）
+let quietTimer = null;
+let foregroundFullscreen = false; // 前台窗口是否全屏（PowerShell 探测，节流 2s，失败降级 false）
+// M1-R1 A7：被占用的快捷键（**运行时内存**，不写 config.json —— 运行时态别污染偏好文件）
+let shortcutOccupied = {};
+let lastUserNotice = null; // 最近一条给用户看的提示（A12 自启失败等；托盘 tooltip + 气泡）
 
 function log() {
   const args = Array.prototype.slice.call(arguments);
@@ -84,6 +102,153 @@ function isDeepNight(now) {
   if (!config || config.deepNightEnabled === false) return false;
   const hour = new Date(now).getHours();
   return hour >= DEEP_NIGHT_START || hour < DEEP_NIGHT_END;
+}
+
+/* ---------------- M1-R1：A13 静默信号 / A2 走动 / A6 吸附 ---------------- */
+
+function statePaused() {
+  return Boolean(state && state.paused) || selfCheckActive;
+}
+
+function hiddenNow() {
+  return !win || win.isDestroyed() || !win.isVisible();
+}
+
+/** A13 六信号（quiet.js 的唯一入参；判定是纯函数，接线在这里）。 */
+function quietSignals(now) {
+  return {
+    foregroundFullscreen: foregroundFullscreen,
+    typingBurst: quiet.isTypingBurst(keystrokes, now),
+    dnd: Boolean(config && config.dnd),
+    paused: statePaused(),
+    hidden: hiddenNow(),
+    deepNight: isDeepNight(now),
+  };
+}
+
+function quietNow(now) {
+  return quiet.shouldBeQuiet(quietSignals(now));
+}
+
+/**
+ * 走路用的静默信号只取「全屏 / 高速打字」两条：
+ * features §2 写死「深夜不禁止走动，只降频降速」——深夜走速 20px/s、换帧 500ms 就是它的落地。
+ * dnd / paused / hidden / 对话中 / 拖拽中另有独立闸门（walkCore.walkBlockReason）。
+ */
+function quietForWalk(now) {
+  return quiet.shouldBeQuiet({
+    foregroundFullscreen: foregroundFullscreen,
+    typingBurst: quiet.isTypingBurst(keystrokes, now),
+  });
+}
+
+function centerOfBounds(bounds) {
+  return { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+}
+
+function walkBlockedNow(now) {
+  return walkCore.walkBlockReason({
+    now: now,
+    paused: statePaused(),
+    dnd: Boolean(config && config.dnd),
+    quiet: quietForWalk(now),
+    hidden: hiddenNow(),
+    dialogueOpen: Boolean(runtime && runtime.dialogueOpen),
+    typing: Boolean(runtime && runtime.typing),
+    dragging: Boolean(runtime && runtime.dragging),
+    dragEndedAt: runtime ? runtime.dragEndedAt : null,
+    cursorQuiet: walkCore.isCursorQuiet(cursorTrail, now),
+    state: lastPetState,
+  });
+}
+
+/** 每个光标 tick（200ms）抽一次签（冷却 180s + 1/300）。 */
+function maybeStartWalk(now) {
+  // 自检 / 冒烟期间猫一律不乱动：窗口位移会干扰同一次运行里的其它测量
+  if (SMOKE_TEST || SELF_CHECK) return;
+  if (!config || !baseBounds || walkSession) return;
+  const want = walkCore.shouldStartWalk({
+    now: now,
+    lastWalkAt: lastWalkEndAt,
+    cursorQuiet: walkCore.isCursorQuiet(cursorTrail, now),
+    state: lastPetState,
+    paused: statePaused(),
+    dnd: Boolean(config.dnd),
+    quiet: quietForWalk(now),
+    hidden: hiddenNow(),
+    dialogueOpen: Boolean(runtime && runtime.dialogueOpen),
+    typing: Boolean(runtime && runtime.typing),
+    dragging: Boolean(runtime && runtime.dragging),
+    dragEndedAt: runtime ? runtime.dragEndedAt : null,
+  });
+  if (!want) return;
+  const cursor = screen.getCursorScreenPoint();
+  const center = centerOfBounds(baseBounds);
+  walkSession = {
+    dir: spriteFrames.direction8(cursor.x - center.x, cursor.y - center.y),
+    traveledPx: 0,
+    elapsedMs: 0,
+    startedAt: now,
+  };
+  sendToPet('pet:walk', { walk: true, dir: walkSession.dir });
+  if (walkTimer) clearInterval(walkTimer);
+  walkTimer = setInterval(walkStepTick, walkCore.WALK_STEP_MS);
+}
+
+function walkStepTick() {
+  if (!walkSession || !baseBounds || !win || win.isDestroyed()) {
+    endWalk('closed');
+    return;
+  }
+  const now = Date.now();
+  const blocked = walkBlockedNow(now);
+  if (blocked) {
+    endWalk(blocked);
+    return;
+  }
+  const cursor = screen.getCursorScreenPoint();
+  const step = walkCore.walkStep({
+    from: centerOfBounds(baseBounds),
+    cursor: cursor,
+    dir: walkSession.dir,
+    traveledPx: walkSession.traveledPx,
+    elapsedMs: walkSession.elapsedMs,
+    deepNight: isDeepNight(now),
+  });
+  if (step.dir !== walkSession.dir) {
+    walkSession.dir = step.dir;
+    sendToPet('pet:walk', { walk: true, dir: step.dir });
+  }
+  if (step.dx !== 0 || step.dy !== 0) {
+    // 【P2-4】每一步都同步 baseBounds，再让窗口跟上（走动期间不落盘）
+    baseBounds = position.clampToArea(
+      {
+        x: baseBounds.x + step.dx,
+        y: baseBounds.y + step.dy,
+        width: baseBounds.width,
+        height: baseBounds.height,
+      },
+      workAreaFor(baseBounds),
+      MIN_VISIBLE
+    );
+    syncWindowBounds();
+    walkSession.traveledPx += Math.hypot(step.dx, step.dy);
+  }
+  walkSession.elapsedMs += walkCore.WALK_STEP_MS;
+  if (step.done) endWalk(step.reason);
+}
+
+/** 结束一次走动：停表 + 通知渲染进程 + **这时候才**落盘（走动期间不写 state.json）。 */
+function endWalk(reason) {
+  if (!walkSession && !walkTimer) return;
+  if (walkTimer) {
+    clearInterval(walkTimer);
+    walkTimer = null;
+  }
+  walkSession = null;
+  lastWalkEndAt = Date.now();
+  sendToPet('pet:walk', { walk: false, reason: reason || null });
+  persistPosition();
 }
 
 function petWindowSize() {
@@ -240,8 +405,14 @@ function persistRuntime() {
 function loadPersisted() {
   configPath = path.join(app.getPath('userData'), 'config.json');
   statePath = path.join(app.getPath('userData'), 'state.json');
-  config = configStore.ensureConfig(configPath); // 首启即落盘一份含全部默认值的 config.json
+  // 首启即落盘一份含全部默认值的 config.json；老文件顺带走一遍 migrateConfig
+  // （schemaVersion 1 -> 2 + nickname 旧语义迁移，A1【P0-2】，迁完写回盘）
+  config = configStore.ensureConfig(configPath, statePath);
   state = configStore.loadState(statePath);
+  if (SMOKE_TEST) {
+    // 冒烟必须**确定性**：别烦我 / 静音这类前置状态一律按默认走（只在内存里，不落盘）
+    config = Object.assign({}, config, { dnd: false });
+  }
   runtime = scheduler.normaliseRuntime(state.scheduler, Date.now());
 }
 
@@ -334,7 +505,14 @@ function createPetWindow() {
 }
 
 function pushConfig() {
-  sendToPet('config:changed', { config: config, deepNight: isDeepNight(Date.now()) });
+  sendToPet('config:changed', {
+    config: config,
+    deepNight: isDeepNight(Date.now()),
+    dnd: Boolean(config && config.dnd),
+    // 在**内存里**把初见流程按住（冒烟 / 自检期间不弹问名气泡，也不落盘）：
+    // 磁盘上的 state.onboarded 一动不动，真人首启照样能看到完整入场 + 问名。
+    onboarded: Boolean(state && state.onboarded) || SMOKE_TEST || SELF_CHECK,
+  });
   sendToPet('pet:pause', { paused: Boolean(state.paused) });
   sendToPet('pet:command', { command: 'pin', pinned: Boolean(state.pinned) });
 }
@@ -346,11 +524,30 @@ function createTray() {
     image = image.resize({ width: 16, height: 16 });
   }
   tray = new Tray(image);
-  tray.setToolTip('hermes-pet 琉斯');
+  tray.setToolTip(trayTooltip());
   tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate()));
   tray.on('click', function () {
     toggleVisibility();
   });
+}
+
+/** 托盘 tooltip：常态是产品名；别烦我开着 / 有自启失败提示时要说清楚（绝不静默）。 */
+function trayTooltip() {
+  const base = 'hermes-pet 琉斯';
+  if (config && config.dnd) return base + ' · 别烦我：开（窗内点击穿透）';
+  if (lastUserNotice) return base + ' · ' + lastUserNotice;
+  return base;
+}
+
+/** A5：托盘图标随 dnd 切换（dnd 开 -> icon-night.png「静默变体」，不改素材本身）。 */
+function refreshTray() {
+  if (!tray || tray.isDestroyed()) return;
+  const iconPath = path.join(SPRITE_DIR, config && config.dnd ? 'icon-night.png' : 'tray.png');
+  let image = nativeImage.createFromPath(iconPath);
+  if (!image.isEmpty()) image = image.resize({ width: 16, height: 16 });
+  tray.setImage(image);
+  tray.setToolTip(trayTooltip());
+  refreshTrayMenu();
 }
 
 function refreshTrayMenu() {
@@ -382,12 +579,35 @@ function petMenuTemplate() {
 
 function trayMenuTemplate() {
   const visible = Boolean(win && !win.isDestroyed() && win.isVisible());
+  const occupiedNames = Object.keys(shortcutOccupied).map(function (action) {
+    return SHORTCUT_LABELS[action] + '=' + shortcutOccupied[action].accelerator;
+  });
   return [
     { label: visible ? '隐藏' : '显示', click: function () { toggleVisibility(); } },
     { type: 'separator' },
     { label: '暂停动画', type: 'checkbox', checked: Boolean(state.paused), click: function (item) { setPaused(item.checked); } },
+    {
+      // A5 别烦我 / 透明模式：勾上后整窗恒定穿透（猫点不动，点击全落到桌面），猫仍在呼吸
+      label: config && config.dnd ? '别烦我 / 透明模式：开' : '别烦我 / 透明模式',
+      type: 'checkbox',
+      checked: Boolean(config && config.dnd),
+      click: function (item) { setDnd(item.checked); },
+    },
+    {
+      // A7【P1-2】静音 = 不主动说话（proactiveEnabled），**不复用**暂停（paused 是冻结）
+      label: '静音（不主动说话）',
+      type: 'checkbox',
+      checked: Boolean(config && config.proactiveEnabled === false),
+      click: function () { toggleMute(); },
+    },
     { label: '重置位置', click: function () { resetPosition(); } },
     { label: '设置', click: function () { openSettings(); } },
+    // A7：被占用的快捷键必须说出来（绝不静默失败），点一下进设置改键
+    {
+      label: occupiedNames.length ? '快捷键被占用：' + occupiedNames.join('、') + '（点此改键）' : '快捷键都可用',
+      enabled: occupiedNames.length > 0,
+      click: function () { openSettings(); },
+    },
     { type: 'separator' },
     { label: '退出', click: function () { quitApp(); } },
   ];
@@ -423,6 +643,168 @@ function setPinned(value) {
   return { ok: true, pinned: state.pinned };
 }
 
+/* ---------------- M1-R1 A5：别烦我 / 透明模式（【P0-1】穿透所有权） ---------------- */
+
+/**
+ * A5 别烦我：偏好级（config.dnd），与「暂停」分开——暂停是「它安静了」（冻结，点击仍可点），
+ * dnd 是「它透明了」（整窗恒定穿透，点击全落到桌面，但呼吸/看她板仍在）。
+ *
+ * 【P0-1-1】开 / 关**两个方向都无条件重断言穿透**。只重断言「关」是这个功能最容易做错的洞：
+ * 鼠标正压在猫身上时勾上 dnd，渲染进程刚报过「命中可交互」（ignore=false），
+ * 若主进程不主动重断言，状态就卡在 ignore=false —— 猫仍然吃点击，功能等于没生效。
+ */
+function setDnd(value) {
+  const next = Boolean(value);
+  if (config.dnd !== next) {
+    config = configStore.saveConfig(configPath, Object.assign({}, config, { dnd: next }));
+  }
+  reassertPassThrough(next ? 'dnd-on' : 'dnd-off');
+  lastInteractive = false;
+  refreshTray();
+  pushConfig();
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('config:changed', { config: config, deepNight: isDeepNight(Date.now()) });
+  }
+  return { ok: true, dnd: Boolean(config.dnd) };
+}
+
+/** A7【P1-2】Alt+M：静音 = 切换 config.proactiveEnabled（不新增 muted、不动 paused）。幂等。 */
+function toggleMute(value) {
+  const next = typeof value === 'boolean' ? value : config.proactiveEnabled !== false;
+  config = configStore.saveConfig(configPath, Object.assign({}, config, { proactiveEnabled: next }));
+  refreshTray();
+  pushConfig();
+  notifySettings();
+  return { ok: true, proactiveEnabled: Boolean(config.proactiveEnabled), muted: config.proactiveEnabled === false };
+}
+
+/* ---------------- M1-R1 A7：全局快捷键 ---------------- */
+
+const SHORTCUT_LABELS = { toggle: '显示/隐藏', chat: '打开对话', settings: '打开设置', mute: '静音' };
+
+/**
+ * 注册一个加速键（A7 的唯一入口，五条纪律都收在这里）：
+ * ① register 前先 unregister 同键（幂等）；
+ * ② register 返回 false = 被别的程序占用 -> 降级成 { ok:false, occupied:true }；
+ * ③ register 抛异常也要 catch（Electron 对非法加速键会抛）；
+ * ④ 绝不把异常抛给上层（一个键失败不影响其它键）。
+ */
+function registerAccelerator(accelerator, handler) {
+  if (typeof accelerator !== 'string' || !accelerator) {
+    return { ok: false, occupied: false, error: 'invalid-accelerator' };
+  }
+  try {
+    globalShortcut.unregister(accelerator);
+    const registered = globalShortcut.register(accelerator, handler);
+    if (!registered) return { ok: false, occupied: true, error: 'occupied' };
+    return { ok: true, occupied: false, error: null };
+  } catch (err) {
+    return { ok: false, occupied: true, error: failureText(err) };
+  }
+}
+
+function shortcutHandler(action) {
+  return function () {
+    if (action === 'toggle') toggleVisibility();
+    else if (action === 'chat') {
+      // 【P2-6】取舍承认：Alt+T 需要把窗口前台化才能让输入框拿到焦点（会抢一次焦点），
+      // 换来的是「一键就能打字」。不改，只在这里写明。
+      if (win && !win.isDestroyed()) {
+        win.show();
+        win.focus();
+      }
+      sendToPet('pet:command', { command: 'dialogue' });
+    } else if (action === 'settings') openSettings();
+    else if (action === 'mute') toggleMute();
+  };
+}
+
+function occupiedShortcutList() {
+  const list = {};
+  Object.keys(shortcutOccupied).forEach(function (action) {
+    list[action] = Object.assign({}, shortcutOccupied[action]);
+  });
+  return list;
+}
+
+function broadcastShortcuts() {
+  const payload = { shortcuts: config ? config.shortcuts : SHORTCUT_DEFAULTS, occupied: occupiedShortcutList() };
+  sendToPet('shortcuts:changed', payload);
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send('shortcuts:changed', payload);
+}
+
+/** 启动时注册四键；冒烟/自检**不注册真实快捷键**（会抢用户键位）。 */
+function registerShortcuts() {
+  unregisterShortcuts();
+  if (SMOKE_TEST || SELF_CHECK) {
+    broadcastShortcuts();
+    return { skipped: true, shortcuts: config.shortcuts, occupied: {} };
+  }
+  shortcutOccupied = {};
+  configStore.SHORTCUT_KEYS.forEach(function (action) {
+    const accelerator = config.shortcuts[action];
+    const result = registerAccelerator(accelerator, shortcutHandler(action));
+    if (!result.ok) {
+      shortcutOccupied[action] = { accelerator: accelerator, error: result.error };
+      log('快捷键注册失败（被占用 / 非法），已标红并提示用户：', action, accelerator, result.error);
+    }
+  });
+  broadcastShortcuts();
+  refreshTray();
+  if (Object.keys(shortcutOccupied).length) {
+    lastUserNotice = '部分快捷键被占用，去设置里改键';
+    refreshTray();
+  }
+  return { skipped: false, shortcuts: config.shortcuts, occupied: occupiedShortcutList() };
+}
+
+/** 退出 / 重注册前先全部注销：不留幽灵占用。 */
+function unregisterShortcuts() {
+  try {
+    globalShortcut.unregisterAll();
+  } catch (err) {
+    log('快捷键注销失败：', failureText(err));
+  }
+  shortcutOccupied = {};
+}
+
+/**
+ * A7 改键：先 unregister 旧键 -> register 新键 -> 失败回滚旧键（旧键必须仍然可用）。
+ * 被占用时返回 { ok:false, occupied:true } 并标红，绝不静默。
+ */
+function setShortcut(action, accelerator) {
+  if (configStore.SHORTCUT_KEYS.indexOf(action) < 0) return { ok: false, reason: 'unknown-action' };
+  const candidate = Object.assign({}, config.shortcuts);
+  candidate[action] = accelerator;
+  const normalised = configStore.coerceShortcuts(candidate);
+  if (normalised[action] !== accelerator) {
+    return { ok: false, reason: 'invalid', shortcuts: config.shortcuts, occupied: occupiedShortcutList() };
+  }
+  const previous = config.shortcuts[action];
+  if (SMOKE_TEST || SELF_CHECK) {
+    // 自检不碰真实快捷键：只回一条「形状正确」的结果，绝不注册
+    return { ok: true, skipped: true, shortcuts: normalised, occupied: occupiedShortcutList() };
+  }
+  try {
+    globalShortcut.unregister(previous);
+  } catch (err) {
+    log('旧快捷键注销失败：', failureText(err));
+  }
+  const result = registerAccelerator(accelerator, shortcutHandler(action));
+  if (!result.ok) {
+    registerAccelerator(previous, shortcutHandler(action)); // 回滚：旧键继续有效
+    shortcutOccupied[action] = { accelerator: accelerator, error: result.error };
+    broadcastShortcuts();
+    refreshTray();
+    return { ok: false, reason: 'occupied', occupied: true, shortcuts: config.shortcuts, occupiedList: occupiedShortcutList() };
+  }
+  delete shortcutOccupied[action];
+  config = configStore.saveConfig(configPath, Object.assign({}, config, { shortcuts: normalised }));
+  broadcastShortcuts();
+  refreshTray();
+  return { ok: true, shortcuts: config.shortcuts, occupied: occupiedShortcutList() };
+}
+
 function resetPosition() {
   baseBounds = defaultBaseBounds();
   syncWindowBounds();
@@ -441,6 +823,15 @@ function recenterForSize() {
     width: size.width,
     height: size.height,
   });
+  // 【P2-5】A4 缩放落盘那一次顺带走一遍吸附：贴着哪条边就还贴哪条边
+  const workArea = workAreaFor(baseBounds);
+  const snapped = position.snapToEdge(
+    position.clampFullyInside(baseBounds, workArea),
+    workArea,
+    position.SNAP_THRESHOLD,
+    position.SNAP_BREATHE
+  );
+  baseBounds = { x: snapped.x, y: snapped.y, width: snapped.width, height: snapped.height };
   syncWindowBounds();
   persistPosition();
 }
@@ -533,25 +924,60 @@ function markActivity(now) {
   runtime = scheduler.markActivity(runtime, now);
 }
 
-function applyAutoLaunch() {
-  if (SMOKE_TEST) return;
+function notifySettings() {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('config:changed', { config: config, deepNight: isDeepNight(Date.now()) });
+  }
+}
+
+/** 给用户**看得见**的提示（A12 自启失败 / 快捷键被占）：托盘 tooltip + 一次气泡，绝不只写日志。 */
+function notifyUser(text) {
+  lastUserNotice = String(text == null ? '' : text);
+  if (tray && !tray.isDestroyed()) tray.setToolTip(trayTooltip());
+  if (lastUserNotice) {
+    sendToPet('pet:proactive', { kind: 'error', text: lastUserNotice, button: null, fromUser: true });
+  }
+  return lastUserNotice;
+}
+
+/**
+ * A12 开机自启（【P1-7】失败路径**可注入**）。
+ * 真的调 app.setLoginItemSettings；options.injectSetLoginItem 是自证门用的替身
+ * （注入一个抛错的函数 -> 断言「调用一次 + 产生一条用户可见提示」）。
+ * 返回值形状固定：{ ok, calls, notice, error }，好让 --self-check 直接断言。
+ */
+function applyAutoLaunch(options) {
+  const opts = options || {};
+  const setLoginItem =
+    typeof opts.injectSetLoginItem === 'function'
+      ? opts.injectSetLoginItem
+      : function (settings) {
+          app.setLoginItemSettings(settings);
+        };
+  if (SMOKE_TEST) {
+    return { ok: true, skipped: true, calls: 0, notice: lastUserNotice, error: null };
+  }
   try {
-    app.setLoginItemSettings({ openAtLogin: Boolean(config.launchAtLogin) });
+    setLoginItem({ openAtLogin: Boolean(config.launchAtLogin) });
+    return { ok: true, skipped: false, calls: 1, notice: null, error: null };
   } catch (err) {
-    log('开机自启设置失败：', err && err.message ? err.message : String(err));
+    const notice = notifyUser('开机自启设置失败：' + failureText(err));
+    log('开机自启设置失败：', failureText(err));
+    return { ok: false, skipped: false, calls: 1, notice: notice, error: failureText(err) };
   }
 }
 
 function applyConfigPatch(patch) {
   const beforeSize = config.size;
   config = configStore.saveConfig(configPath, Object.assign({}, config, patch || {}));
+  // A7：patch 里带了 shortcuts（理论上只有设置面板会这么干）就重挂一遍全局快捷键
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'shortcuts')) registerShortcuts();
   applyAutoLaunch();
   if (config.size !== beforeSize) recenterForSize();
   else syncWindowBounds();
   pushConfig();
-  if (settingsWin && !settingsWin.isDestroyed()) {
-    settingsWin.webContents.send('config:changed', { config: config, deepNight: isDeepNight(Date.now()) });
-  }
+  notifySettings();
+  refreshTray();
   return { ok: true, config: config };
 }
 
@@ -599,20 +1025,32 @@ function registerIpc() {
   });
   ipcMain.on('pet:drag-end', function () {
     if (!win || win.isDestroyed()) return;
+    if (walkSession) endWalk('drag'); // 拖拽优先于走动：先把散步停干净
     const bounds = win.getBounds();
     const size = petWindowSize();
-    baseBounds = clampToWorkArea({
+    const raw = {
       x: Math.round(bounds.x + (bounds.width - size.width) / 2),
       y: Math.round(bounds.y + (bounds.height - size.height)),
       width: size.width,
       height: size.height,
-    });
+    };
+    // 【P0-5】A6 吸附顺序**写死**：clampFullyInside -> snapToEdge -> clampFullyInside 兜底。
+    // 先整体收进 workArea，再在「完整在屏内」的窗口上判四边距离 —— 堵住 M0 clampToArea
+    // (MIN_VISIBLE=48) 允许窗口出屏 96px、于是「永远吸附不上」的洞。
+    const workArea = workAreaFor(raw);
+    const inside = position.clampFullyInside(raw, workArea);
+    const snapped = position.snapToEdge(inside, workArea, position.SNAP_THRESHOLD, position.SNAP_BREATHE);
+    const settled = position.clampFullyInside(snapped, workArea);
+    baseBounds = { x: settled.x, y: settled.y, width: settled.width, height: settled.height };
+    if (snapped.edge) log('边缘吸附：', snapped.edge, JSON.stringify(baseBounds));
     dragSession = null;
     runtime = scheduler.recordDrag(runtime, Date.now(), false);
     syncWindowBounds();
     persistPosition();
   });
   ipcMain.on('pet:bubble-resize', function (event, size) {
+    // 【P2-4】走动中气泡要展开：先 walk:end（把走路停干净、把位置落盘），再同步窗口尺寸
+    if (walkSession) endWalk('bubble-resize');
     if (!size || !Number.isFinite(size.height)) {
       bubbleContent = null;
     } else {
@@ -631,6 +1069,58 @@ function registerIpc() {
   // 进程时序的前提下，确定性地走一遍同一条状态切换路径（见 probeMousePassThrough）。
   ipcMain.on('pet:ignore-mouse', function (event, info) {
     applyIgnoreMouse(info, 'renderer');
+  });
+  // A13：渲染进程上报「这一下是击键」——主进程只留近 3s 的时刻，密度够了就安静
+  ipcMain.on('pet:keystroke', function () {
+    keystrokes = quiet.recordKeystroke(keystrokes, Date.now());
+  });
+  // A5：渲染进程在 dnd 短路时也上报一次 { ignore:true }，保证 lastInteractive 缓存不在 dnd 下腐烂
+  ipcMain.handle('pet:set-dnd', function (event, value) {
+    return setDnd(value);
+  });
+  // A1：初见一问一答（skip 落 nickname='你'；拒绝词 / 空输入都在纯函数里判）
+  ipcMain.handle('onboard:complete', function (event, text) {
+    const outcome = replies.resolveOnboarding(text);
+    if (outcome.action === 'retry') return { ok: true, done: false, nickname: config.nickname, line: outcome.line };
+    state.onboarded = true;
+    persistState();
+    config = configStore.saveConfig(configPath, Object.assign({}, config, { nickname: outcome.nickname }));
+    pushConfig();
+    notifySettings();
+    return { ok: true, done: true, nickname: outcome.nickname, line: outcome.line, action: outcome.action };
+  });
+  ipcMain.handle('onboard:skip', function () {
+    state.onboarded = true;
+    persistState();
+    config = configStore.saveConfig(configPath, Object.assign({}, config, { nickname: configStore.ONBOARD_NICKNAME }));
+    pushConfig();
+    notifySettings();
+    return { ok: true, done: true, nickname: config.nickname, line: replies.ONBOARD_LINES.decline };
+  });
+  // A8：双击气泡复制。preload 已做 typeof / 长度 <=4096 截断，这里只落地到系统剪贴板。
+  ipcMain.handle('clipboard:write', function (event, text) {
+    if (typeof text !== 'string' || !text) return { ok: false, reason: 'empty' };
+    try {
+      clipboard.writeText(text);
+      return { ok: true, length: text.length };
+    } catch (err) {
+      return { ok: false, reason: failureText(err) };
+    }
+  });
+  // A7：改键（先注销旧 -> 注册新 -> 失败回滚）
+  ipcMain.handle('shortcuts:set', function (event, payload) {
+    const info = payload || {};
+    return setShortcut(info.action, info.accelerator);
+  });
+  ipcMain.handle('shortcuts:get', function () {
+    return { shortcuts: config.shortcuts, occupied: occupiedShortcutList() };
+  });
+  // 【P2-9】'bubble:closed' 之前是死通道（渲染进程发了没人接）：补上 handler，
+  // 顺手把「气泡没了 -> 窗口收回基准尺寸」这条收尾做掉。
+  ipcMain.on('bubble:closed', function () {
+    if (walkSession) endWalk('bubble-closed');
+    bubbleContent = null;
+    syncWindowBounds();
   });
   ipcMain.handle('chat:send', async function (event, text) {
     return replyService.reply(text);
@@ -676,13 +1166,24 @@ function schedulerTick() {
   runtime = guard.runtime;
   if (guard.skip) return;
   const hidden = !win || win.isDestroyed() || !win.isVisible();
+  const signals = quietSignals(now);
+  const quietAll = quiet.shouldBeQuiet(signals);
+  // A13：安静如果**只**由深夜一条引起，就不该把 22:30 的数字日落一起关掉 ——
+  // 那条提醒本来就是为深夜准备的。其余任何一条信号（全屏/打字/dnd/暂停/隐藏）
+  // 都一票否决，连 sunset 也不例外。
+  const nightOnly =
+    quietAll &&
+    signals.deepNight &&
+    !(signals.foregroundFullscreen || signals.typingBurst || signals.dnd || signals.paused || signals.hidden);
   const decision = scheduler.plan({
     now: now,
     config: config,
     runtime: runtime,
     state: lastPetState,
-    paused: Boolean(state.paused) || selfCheckActive,
+    paused: statePaused(),
     hidden: hidden,
+    quiet: quietAll,
+    quietExemptKinds: nightOnly ? ['sunset'] : [],
   });
   if (decision.action === 'nap') {
     sendToPet('pet:command', { command: 'nap' });
@@ -701,22 +1202,34 @@ function schedulerTick() {
 function tickCursor() {
   if (!win || win.isDestroyed() || !win.isVisible() || !baseBounds) return;
   const point = screen.getCursorScreenPoint();
-  sendToPet('pet:cursor', point);
+  const now = Date.now();
+  // A2：近 5s 光标轨迹（累计位移 >120px = 高频操作 = 禁止散步）
+  cursorTrail.push({ t: now, x: point.x, y: point.y });
+  cursorTrail = cursorTrail.filter(function (entry) {
+    return entry.t >= now - walkCore.CURSOR_QUIET_MS;
+  });
+  // 【P2-2】A3 的方向要用**主进程下发的窗口矩形**算 —— 渲染进程的 window.screenX 会滞后于
+  // 窗口真实位置（HANDOFF §13 记过）。这里把窗口原点和光标一起发过去。
+  const live = win.getBounds();
+  sendToPet('pet:cursor', { x: point.x, y: point.y, winX: live.x, winY: live.y });
   const centerX = baseBounds.x + baseBounds.width / 2;
   const centerY = baseBounds.y + baseBounds.height / 2;
   const near = Math.hypot(point.x - centerX, point.y - centerY) <= ACTIVITY_NEAR_PX;
   const moved = lastCursor ? Math.hypot(point.x - lastCursor.x, point.y - lastCursor.y) >= 20 : false;
   lastCursor = point;
-  const now = Date.now();
   if (near && moved && now - lastNearActivityAt > ACTIVITY_THROTTLE_MS) {
     lastNearActivityAt = now;
     markActivity(now);
   }
+  maybeStartWalk(now); // A2：抽签 + 起步（冷却 180s + 1/300）
 }
 
 function startTimers() {
   cursorTimer = setInterval(tickCursor, 200);
   schedulerTimer = setInterval(schedulerTick, 1000);
+  // A13：全屏探测节流 ~2s（探测本身在后台跑，这里只读最近一次结果并顺手触发刷新）
+  quietTick();
+  quietTimer = setInterval(quietTick, quiet.FULLSCREEN_THROTTLE_MS);
   deepNightTimer = setInterval(function () {
     sendToPet('pet:deep-night', { deepNight: isDeepNight(Date.now()) });
   }, 60000);
@@ -726,7 +1239,7 @@ function startTimers() {
 }
 
 function stopTimers() {
-  [cursorTimer, schedulerTimer, deepNightTimer, smokeTimer, topmostWatchdog, ignoreWatchdog].forEach(function (timer) {
+  [cursorTimer, schedulerTimer, deepNightTimer, smokeTimer, topmostWatchdog, ignoreWatchdog, quietTimer].forEach(function (timer) {
     if (timer) clearInterval(timer);
   });
   cursorTimer = null;
@@ -735,7 +1248,22 @@ function stopTimers() {
   smokeTimer = null;
   topmostWatchdog = null;
   ignoreWatchdog = null;
+  quietTimer = null;
+  // A2：走动计时器也一起清掉（退出时不留尾巴），但不落盘 —— 退出路径另有 persistPosition
+  if (walkTimer) {
+    clearInterval(walkTimer);
+    walkTimer = null;
+  }
+  walkSession = null;
   stopBreakCountdown();
+}
+
+/**
+ * A13：读一次全屏探测（节流 2s、失败降级 false、可注入/mock —— 见 src/core/quiet.js）。
+ * 探测在后台异步跑，这里只取「最近一次」的同步结果，绝不阻塞主进程。
+ */
+function quietTick() {
+  foregroundFullscreen = quiet.detectForegroundFullscreen();
 }
 
 /**
@@ -798,11 +1326,16 @@ function failureText(err) {
  * 所以直接调它 = 走一遍和真实命中完全相同的路径。
  * source 只用于 --smoke-test 的日志：区分「真实光标命中触发」与「探针合成」。
  */
-function applyIgnoreMouse(info, source) {
+function applyIgnoreMouse(info, source, options) {
   if (!win || win.isDestroyed()) return;
-  const ignore = !(info && info.ignore === false);
+  const opts = options || {};
+  // 【P0-1】dnd 是穿透状态的**唯一裁决点**：dnd 为真时无条件 ignore=true ——
+  // 渲染进程报什么都不作数（鼠标压在猫身上时它刚报过「命中」）。
+  // 探针用 bypassDnd 走同一条切换路径，好把「开/关双向」验证成确定性断言。
+  const dndActive = Boolean(config && config.dnd) && !opts.bypassDnd;
+  const ignore = dndActive ? true : !(info && info.ignore === false);
   // 渲染进程每次命中变化都会报一次，主进程缓存下来给穿透看门狗用（FIX-B）。
-  lastInteractive = !ignore;
+  lastInteractive = dndActive ? false : !ignore;
   if (ignore === ignoreMouseActive) return;
   ignoreMouseActive = ignore;
   win.setIgnoreMouseEvents(ignore, { forward: true });
@@ -844,6 +1377,72 @@ function sleep(ms) {
   });
 }
 
+/**
+ * A5【P0-1-4】dnd-locks-passthrough 的**确定性**探针（光标无关）：
+ *   ① 开 dnd -> 再合成一次「渲染进程报命中可交互」（ignore:false）—— dnd 必须压住它，
+ *      ignoreMouseActive 仍为 true（「鼠标正压在猫身上时勾上别烦我」的现场）；
+ *   ② 关 dnd -> 必须回到穿透（off 方向也重断言了）；
+ *   ③ 收尾把 dnd 恢复成原值，并再断言一次穿透。
+ */
+function probeDndLocksPassthrough() {
+  const detail = { onLocks: false, offRestores: false, restored: false };
+  const before = Boolean(config && config.dnd);
+  try {
+    setDnd(true);
+    applyIgnoreMouse({ ignore: false }, 'probe'); // 合成「鼠标压在猫上」
+    detail.onLocks = ignoreMouseActive === true;
+    setDnd(false);
+    detail.offRestores = ignoreMouseActive === true;
+  } catch (err) {
+    detail.error = failureText(err);
+  } finally {
+    setDnd(before);
+  }
+  detail.restored = ignoreMouseActive === true && Boolean(config.dnd) === before;
+  return detail;
+}
+
+/**
+ * A7 快捷键自证：只用**不常用测试键** Alt+F9 / Alt+F10，验完立刻注销（绝不抢用户键位）。
+ * 返回 { register, occupied, unregistered }：
+ *   register    —— 真注册成功一次（走 globalShortcut.register 的返回 true 路径）；
+ *   occupied    —— 注册失败 / 抛异常一律被 catch 成 { ok:false, occupied:true }（降级不静默）。
+ */
+function probeShortcuts() {
+  const detail = { register: false, occupied: false, unregistered: false, keys: SHORTCUT_PROBE_KEYS.slice() };
+  const key = SHORTCUT_PROBE_KEYS[0];
+  const result = registerAccelerator(key, function () {});
+  detail.register = result.ok === true;
+  // 「被占用」用**非法加速键**来触发（`register false=被占用` 的两条路径都要 catch）：
+  // 这比「自己注册两次」更确定 —— 不依赖 Electron 对重复注册的返回约定。
+  const bogus = registerAccelerator('Alt+F9+NotAKey', function () {});
+  detail.occupied = bogus.ok === false && bogus.occupied === true;
+  try {
+    globalShortcut.unregister(key);
+  } catch (err) {
+    detail.error = failureText(err);
+  }
+  detail.unregistered = !globalShortcut.isRegistered(key);
+  return detail;
+}
+
+/** A7「退出无幽灵占用」自证：注册两个测试键 -> unregisterAll -> 两个都必须不再注册。 */
+function probeUnregisterAll() {
+  const detail = { registered: 0, allCleared: false };
+  SHORTCUT_PROBE_KEYS.forEach(function (key) {
+    if (registerAccelerator(key, function () {}).ok) detail.registered += 1;
+  });
+  try {
+    globalShortcut.unregisterAll();
+  } catch (err) {
+    detail.error = failureText(err);
+  }
+  detail.allCleared = SHORTCUT_PROBE_KEYS.every(function (key) {
+    return !globalShortcut.isRegistered(key);
+  });
+  return detail;
+}
+
 /** --self-check：把交互链路真正跑一遍（点击 -> 气泡 -> 回复 -> 设置面板），失败即返工。 */
 async function runSelfCheckFlow() {
   selfCheckActive = true; // 自检期间不弹主动气泡，避免干扰测量
@@ -866,6 +1465,20 @@ async function runSelfCheckFlow() {
       settingsWindow: function () { return settingsWin; },
       openSettings: openSettings,
       closeSettings: closeSettings,
+      // M1-R1 新增：A5 / A7 / A12 / A13 的自证钩子（全部确定性，不读真实光标与真实命中态）
+      dnd: function () { return Boolean(config.dnd); },
+      setDnd: setDnd,
+      probeDndLocksPassthrough: probeDndLocksPassthrough,
+      probeShortcuts: probeShortcuts,
+      probeUnregisterAll: probeUnregisterAll,
+      shortcuts: function () { return { shortcuts: config.shortcuts, occupied: occupiedShortcutList() }; },
+      applyAutoLaunch: applyAutoLaunch,
+      lastUserNotice: function () { return lastUserNotice; },
+      foregroundFullscreen: function () { return foregroundFullscreen; },
+      setForegroundFullscreenProbe: function (value) { foregroundFullscreen = Boolean(value); },
+      probeForegroundFullscreen: function () {
+        return quiet.detectForegroundFullscreen({ wait: true });
+      },
     });
     result.steps.forEach(function (step) {
       log('[selfcheck]', step.ok ? 'OK  ' : 'FAIL', step.name, '-', step.detail);
@@ -887,6 +1500,8 @@ async function runSelfCheckFlow() {
 function smokeOutcome() {
   // FIX-1：穿透断言走确定性探针（光标无关），不再直接读会被渲染进程合法改写的 ignoreMouseActive。
   const pass = probeMousePassThrough();
+  // A5【P0-1-4】dnd-locks-passthrough：开 dnd 后 ignoreMouseActive 必须仍是 true（光标无关模式）
+  const dndProbe = probeDndLocksPassthrough();
   const payload = {
     window: Boolean(win && !win.isDestroyed() && win.isVisible()),
     tray: Boolean(tray && !tray.isDestroyed()),
@@ -897,10 +1512,12 @@ function smokeOutcome() {
     // FIX-A / FIX-B 断言：两条「环境级静默失效」看门狗已接线（第四轮）
     topmostWatchdog: Boolean(topmostWatchdog),
     ignoreWatchdog: Boolean(ignoreWatchdog),
+    // M1-R1 A5：dnd 开 -> 穿透锁死；关 -> 恢复；收尾恢复原值
+    dnd: dndProbe.onLocks && dndProbe.offRestores && dndProbe.restored,
   };
   const ok = payload.window && payload.tray && payload.pet && payload.mousePassThrough
-    && payload.topmostWatchdog && payload.ignoreWatchdog;
-  return { ok: ok, pass: pass, line: (ok ? 'SMOKE_OK ' : 'SMOKE_FAIL ') + JSON.stringify(payload) };
+    && payload.topmostWatchdog && payload.ignoreWatchdog && payload.dnd;
+  return { ok: ok, pass: pass, dndProbe: dndProbe, line: (ok ? 'SMOKE_OK ' : 'SMOKE_FAIL ') + JSON.stringify(payload) };
 }
 
 function finishSmokeCheck() {
@@ -913,6 +1530,7 @@ function finishSmokeCheck() {
     return;
   }
   log('穿透探针（FIX-1 光标无关）：', JSON.stringify(result.pass));
+  log('dnd 锁定探针（A5 光标无关）：', JSON.stringify(result.dndProbe));
   process.stdout.write(result.line + '\n');
   const code = result.ok ? 0 : 1;
   setTimeout(function () { app.exit(code); }, 80);
@@ -929,6 +1547,8 @@ function start() {
   registerIpc();
   createPetWindow();
   createTray();
+  registerShortcuts(); // A7：四键（冒烟 / 自检跳过，绝不抢用户键位）
+  applyAutoLaunch(); // A12：真接线（失败给可见提示，绝不静默）
   startTimers();
   log('已启动，adapter =', replyService.primaryName, '；userData =', app.getPath('userData'));
   if (SMOKE_TEST) smokeTimer = setTimeout(finishSmokeCheck, SMOKE_WAIT_MS);
@@ -970,8 +1590,13 @@ if (!gotLock) {
   app.on('before-quit', function () {
     quitting = true;
     stopTimers();
+    unregisterShortcuts(); // A7：退出不留幽灵占用
     persistPosition();
     persistState();
+  });
+  // A7 纪律：will-quit 再兜一次 unregisterAll（异常也不能挡住退出）
+  app.on('will-quit', function () {
+    unregisterShortcuts();
   });
   // 桌宠常驻：关掉窗口不等于退出（退出只走托盘/右键菜单）
   app.on('window-all-closed', function () {

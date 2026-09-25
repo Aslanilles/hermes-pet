@@ -4,6 +4,60 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const G = require('../src/core/window-guards');
 
+test('【P0-1】watchdogAction 16 组合穷举：dnd=true 一律 force-ignore，dnd 缺省/false 时 M0 结论一条不变', () => {
+  const byKey = {};
+  [false, true].forEach(function (dnd) {
+    [false, true].forEach(function (lastInteractive) {
+      [false, true].forEach(function (isDestroyed) {
+        [false, true].forEach(function (visible) {
+          byKey[[dnd, lastInteractive, isDestroyed, visible].join(',')] = G.watchdogAction({
+            dnd: dnd,
+            lastInteractive: lastInteractive,
+            isDestroyed: isDestroyed,
+            visible: visible,
+          });
+        });
+      });
+    });
+  });
+  assert.equal(Object.keys(byKey).length, 16);
+  Object.keys(byKey).forEach(function (key) {
+    const parts = key.split(',');
+    const dnd = parts[0] === 'true';
+    const lastInteractive = parts[1] === 'true';
+    const isDestroyed = parts[2] === 'true';
+    const visible = parts[3] === 'true';
+    let expected = 'noop';
+    if (!isDestroyed && visible) {
+      expected = dnd || !lastInteractive ? 'force-ignore' : 'noop';
+    }
+    assert.equal(byKey[key], expected, 'dnd,lastInteractive,isDestroyed,visible = ' + key);
+  });
+  // 重点（A5）：鼠标正压在猫身上时开「别烦我」，也必须强开穿透
+  assert.equal(byKey['true,true,false,true'], 'force-ignore');
+  // dnd 不是绕过「窗口不存在 / 不可见」的理由
+  assert.equal(byKey['true,false,true,true'], 'noop');
+  assert.equal(byKey['true,false,false,false'], 'noop');
+  // dnd 缺省 / false：M0 的 8 组合逐条复述
+  const m0 = {
+    'false,false,false,true': 'force-ignore',
+    'false,true,false,true': 'noop',
+    'false,false,true,true': 'noop',
+    'false,false,false,false': 'noop',
+    'false,true,false,false': 'noop',
+    'false,true,true,true': 'noop',
+    'false,true,true,false': 'noop',
+    'false,false,true,false': 'noop',
+  };
+  Object.keys(m0).forEach(function (key) {
+    assert.equal(byKey[key], m0[key], key);
+  });
+  // 键缺省 / 真值非布尔：一律按「没有开 dnd」处理
+  assert.equal(G.watchdogAction({ lastInteractive: true, isDestroyed: false, visible: true }), 'noop');
+  assert.equal(G.watchdogAction({ dnd: 'yes', lastInteractive: true, isDestroyed: false, visible: true }), 'noop');
+  assert.equal(G.watchdogAction({ dnd: false, lastInteractive: false, isDestroyed: false, visible: true }), 'force-ignore');
+});
+
 test('看门狗常数与 docs/M0-recon-github-pet.md §6 对齐（5000ms / 2000ms / pop-up-menu）', () => {
   assert.equal(G.TOPMOST_WATCHDOG_MS, 5000);
   assert.equal(G.IGNORE_WATCHDOG_MS, 2000);

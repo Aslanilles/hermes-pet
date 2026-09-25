@@ -112,8 +112,38 @@ body.pinned .cat {
 #bubble-notice.is-hidden,
 #bubble-user.is-hidden,
 #bubble-actions.is-hidden,
+#bubble-pin.is-hidden,
+#bubble-copied.is-hidden,
 #composer.is-hidden {
   display: none;
+}
+
+/* A8「已复制」/ A10「已固定」标记：都是普通元素 + textContent，
+   不用 innerHTML / insertAdjacentHTML（【P1-5】）。 */
+.bubble-flags {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.bubble-pin,
+.bubble-copied {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.bubble-copied {
+  margin-left: auto;
+  color: var(--star-gold);
+  transition: opacity 180ms ease;
+}
+
+/* 固定态要一眼看得出来（图钉 + 金色边框），否则用户不知道它为什么赖着不走 */
+body.bubble-pinned .bubble {
+  border-color: var(--star-gold);
+  box-shadow: 0 2px 12px rgba(236, 201, 75, 0.35);
 }
 
 .bubble-text {
@@ -228,6 +258,52 @@ body[data-pet-state='talk'] .cat-slot {
 
 body[data-pet-state='listen'] .cat-slot {
   animation: listen-breathe 2.4s ease-in-out infinite;
+}
+
+/* ---------------- A3 悬停看向光标：方向切换给一点过渡，不要硬切 ---------------- */
+
+body[data-pet-state='look'] .cat {
+  transition: transform 180ms ease-out;
+}
+
+/* ---------------- A11 拖拽反馈：按住即拖（无 1s 等待）+ 立刻半透明 ---------------- */
+
+body.dragging .cat {
+  opacity: 0.6;
+  cursor: grabbing;
+}
+
+body.dragging .cat-slot {
+  animation: none; /* 拖拽时不叠 talk/listen 的小动作，方向帧说话 */
+}
+
+/* ---------------- A1 首启入场：从右边缘探出、左右张望、跳到底部中央 ----------------
+   动画加在 .cat 上（而不是 #stage / .cat-slot）：
+   #stage 的 transform 被主进程下发的 windowShift 占用；.cat-slot 被 talk/listen 占用。
+   .cat 的 transform 是 scale(var(--pet-scale))，所以关键帧里把它一起写进去。 */
+
+@keyframes pet-enter {
+  0% {
+    transform: translate(70px, 26px) scale(calc(var(--pet-scale) * 0.9));
+    opacity: 0;
+  }
+  30% {
+    transform: translate(46px, 4px) scale(var(--pet-scale));
+    opacity: 1;
+  }
+  50% {
+    transform: translate(30px, 0) scale(var(--pet-scale));
+  }
+  72% {
+    transform: translate(12px, -10px) scale(var(--pet-scale));
+  }
+  100% {
+    transform: translate(0, 0) scale(var(--pet-scale));
+  }
+}
+
+body.pet-entering .cat {
+  animation: pet-enter 1.5s ease-out;
 }
 
 /* ---------------- 深夜模式（22:00-07:00） ---------------- */

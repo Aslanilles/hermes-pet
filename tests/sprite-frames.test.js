@@ -4,6 +4,57 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const S = require('../src/core/sprite-frames');
 
+test('A2/A3 8 向量化：4 正轴 + 4 对角 + 22.5° 分界钉死 + 无位移面朝观众', () => {
+  assert.equal(S.direction8(1, 0), 'E');
+  assert.equal(S.direction8(0, 1), 'S');
+  assert.equal(S.direction8(-1, 0), 'W');
+  assert.equal(S.direction8(0, -1), 'N');
+  assert.equal(S.direction8(1, 1), 'SE');
+  assert.equal(S.direction8(-1, 1), 'SW');
+  assert.equal(S.direction8(1, -1), 'NE');
+  assert.equal(S.direction8(-1, -1), 'NW');
+  // 分界：(10,4) ≈ 21.8° < 22.5° -> E；(10,5) ≈ 26.6° > 22.5° -> SE
+  assert.equal(S.direction8(10, 4), 'E');
+  assert.equal(S.direction8(10, 5), 'SE');
+  // 四象限镜像一致（正负号不漏）
+  assert.equal(S.direction8(10, -4), 'E');
+  assert.equal(S.direction8(10, -5), 'NE');
+  assert.equal(S.direction8(-10, 4), 'W');
+  assert.equal(S.direction8(-10, 5), 'SW');
+  // 无位移 / 脏值 -> S（面朝观众，不抛错）
+  assert.equal(S.direction8(0, 0), 'S');
+  assert.equal(S.direction8(NaN, null), 'S');
+  assert.equal(S.direction8(undefined), 'S');
+  assert.equal(S.DIRECTION_DEFAULT, 'S');
+  assert.deepEqual(S.DIRECTIONS, ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']);
+});
+
+test('walk / look 取帧：复用 8 方向组（各 2 帧），walk 交替、look 恒第 0 帧，非法方向回落 S', () => {
+  assert.equal(S.STATE_SPRITES.walk, 'S');
+  assert.equal(S.STATE_SPRITES.look, 'S');
+  assert.ok(S.PET_STATES.indexOf('walk') >= 0 && S.PET_STATES.indexOf('look') >= 0);
+  S.DIRECTIONS.forEach(function (dir) {
+    assert.equal(S.spriteForWalk(dir), dir);
+    assert.equal(S.spriteForLook(dir), dir);
+    assert.equal(S.frameCount(dir), 2, dir + ' 组必须是 2 帧');
+    const vector = S.DIRECTION_VECTORS[dir];
+    assert.equal(vector.length, 2);
+    assert.ok(Math.abs(Math.hypot(vector[0], vector[1]) - 1) < 1e-12, dir + ' 向量必须是单位向量');
+    // 向量喂回 direction8 必须回到同一个方向（取帧与移动方向同一套表）
+    assert.equal(S.direction8(vector[0], vector[1]), dir);
+  });
+  assert.equal(S.spriteForWalk('X'), 'S');
+  assert.equal(S.spriteForWalk(null), 'S');
+  assert.equal(S.spriteForLook(undefined), 'S');
+  assert.equal(S.isDirection('S'), true);
+  assert.equal(S.isDirection('s'), false);
+  assert.equal(S.isDirection('SE'), true);
+  // 走帧就是映射表里那 8 组（负索引照抄，不自创）
+  assert.equal(S.spritePosition('E', 1), '-96px -32px');
+  assert.equal(S.spritePosition('NW', 0), '-32px 0px');
+  assert.equal(S.spritePosition('SE', 1), '-160px -64px');
+});
+
 test('索引表照抄 docs/M0-sprite-map.md，不自创', () => {
   assert.deepEqual(S.SPRITE_SETS.idle, [[-3, -3]]);
   assert.deepEqual(S.SPRITE_SETS.alert, [[-7, -3]]);

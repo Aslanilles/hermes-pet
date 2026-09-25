@@ -772,3 +772,82 @@ PS> npx electron . --self-check
 [hermes-pet] [selfcheck] OK   settings-bound-to-config - {"nickname":"琉斯","size":"120","hasBridge":true}
 SELFCHECK_OK 18/18
 ```
+
+## 14. M1-R1 验收（A1-A13 + 两个新纯逻辑模块 + 自证门 18 -> 37）
+
+> 权威：`docs/M1R1-task.md` v3。本节**只追加**，§1-§13 一行未改。
+> 完整未裁剪日志落 `docs/_m1r1/`：`tests-host.log` / `tests-container.log` / `smoke-5x.log` / `selfcheck.log` / `fullscreen-probe.log`。
+
+### 14.1 §3.1 六条命令（真实输出）
+
+**① 宿主 Node 24：`node --test tests/*.test.js`**
+```text
+ℹ tests 130
+ℹ pass 130
+ℹ fail 0
+```
+92 条 M0 旧用例零红；新增 `tests/walk.test.js`(9) + `tests/quiet.test.js`(10)，另在 6 个既有测试文件里扩了 19 条（state-machine 白名单只增不减快照 / sprite-frames direction8 / config migrate+shortcuts / scheduler return+2h+quiet / position snapToEdge 六场景 / window-guards dnd 16 组合）。
+
+**② 容器 Node 20：`docker exec -w /workspace hermes-pet-dev node --test tests/`**
+```text
+# tests 130
+# pass 130
+# fail 0
+```
+
+**③ 语法体检（glob 已含新增 `src/core/walk.js` / `src/core/quiet.js`）**
+```text
+ALL_JS_SYNTAX_OK
+```
+
+**④ `npx electron . --smoke-test` 连跑 5 次（每轮先 `Get-Process electron | Stop-Process -Force` 冷启动，exit 全 0）**
+```text
+run 1 exit=0 : SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true,"dnd":true}
+run 2 exit=0 : SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true,"dnd":true}
+run 3 exit=0 : SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true,"dnd":true}
+run 4 exit=0 : SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true,"dnd":true}
+run 5 exit=0 : SMOKE_OK {"window":true,"tray":true,"pet":true,"mousePassThrough":true,"topmostWatchdog":true,"ignoreWatchdog":true,"dnd":true}
+```
+5/5 SMOKE_OK；新增 `dnd` 字段（A5 探针：开 dnd -> 穿透锁死 / 关 -> 恢复 / 收尾还原，光标无关）。
+
+**⑤ `npx electron . --self-check`（exit=0）**
+```text
+SELFCHECK_OK 37/37
+```
+18 -> 37：新增 19 项全部确定性（只读纯逻辑 / 状态机 / config，不读真实光标与真实命中态）；shortcut 只用 `Alt+F9`/`Alt+F10`，验完即注销。
+
+**⑥ A13 全屏探测真跑一次（【P1-3】本轮必做，不是「接口存在」）**
+```powershell
+node -e "require('./src/core/quiet').detectForegroundFullscreen({wait:true}).then(r=>console.log(JSON.stringify(r)))"
+```
+```json
+  {"fullscreen":false,"raw":"FULLSCREEN 0 rect=-7,-7,1446,858 monitor=0,0,1440,900","error":null,"durationMs":327}
+```
+判读：PowerShell + user32 真的拿到了前台窗口矩形与显示器矩形（`-7,-7,1446,858` 是带阴影的最大化窗口，盖不住 `1440x900` 的显示器），所以判 `0`（正确降级，不是报错）；`error=null`、`durationMs=327`。反向（`true`）由 `tests/quiet.test.js` 注入 `FULLSCREEN 1` 覆盖。
+
+### 14.2 交付文件
+
+- 新增：`src/core/walk.js`、`src/core/quiet.js`、`tests/walk.test.js`、`tests/quiet.test.js`。
+- 改（src，15 个）：`core` 下 `sprite-frames / state-machine / position / scheduler / config / replies / window-guards`、`main.js`、`preload.js`、`renderer` 下 `index.html / pet.js / pet.css / settings.html / settings.js / settings.css`。
+- 改（测试 / 工具，7 个）：`tests` 下 `state-machine / sprite-frames / config / scheduler / position / window-guards` 六个 `.test.js`、`tools/selfcheck.js`。
+- 未碰：`docs/M0-*.md`、`hermes-pet-product-design.md`、`data/sprites/`、`tools` 下的 py 脚本、`src/adapters/`、`src/hermes_pet/`、`pyproject.toml`、`.env`、`docs/M1R1-*.md`。
+
+### 14.3 自证门新增 19 项（18 -> 37）
+
+- 主线 13：`walk-state-exists` / `look-state-exists` / `dnd-locks-passthrough` / `snap-to-edge` / `zoom-clamp` / `onboarded-field` / `return-trigger` / `shortcut-register` / `shortcut-occupied` / `shortcut-unregister-all` / `copy-bridge` / `history-↑` / `bubble-pin`。
+- 【P1-6】4：`quiet-blocks-proactive`（六信号各一次 -> plan 全 `quiet`、走动全挡；深夜只减速到 2px/步）/ `walk-guards`（dnd / 暂停 / 对话中 / 拖后 1s 一律假，拖后满 2s 变真）/ `config-migrate-nickname`（`schemaVersion:1` + `琉斯` -> `你`，改过名的不动）/ `return-clock-guard`（回拨不置位、跨天清零、合盖唤醒只判一次）。
+- 【P1-5】1：`copy-overlong-truncated`（5000 字 -> 4096 + `truncated:true`；非 string / 空白被拒）。
+- 【P1-7 复核补】1：`autolaunch-failure-injected`（注入抛错的 setLoginItem -> 调用恰好 1 次且产生一条用户可见提示）。
+
+### 14.4 本轮跑红后修掉的真问题（单测 / 自证门当场抓到的）
+
+- `walkStep` 对角线取整会把单次位移顶出 100px 额度（`traveledPx=99` 时走 1.41px）-> 极端额度退化成单轴 1px。
+- `zoomSize(145, +1)` 因浮点误差算出 160，与 features §A4 验收链 `120->132->145->159` 冲突 -> 取整前减 epsilon。
+- `state-machine` 被白名单拒绝的 `walk:start`（如 sleeping 中）会偷偷留下脏 `walkDir` -> 只在事件被接受时记方向。
+- `tests/walk.test.js` 的源码断言误命中注释里的 `require('electron')` -> 先剥注释再判定。
+
+### 14.5 遗留 / 明确不做
+
+- Alt+T 触发时会把窗口前台化抢一次焦点（【P2-6】已承认，换取「一键就能打字」）；Esc 只在猫窗口聚焦时生效，从不注册全局。
+- 全屏探测按当前前台窗口**实时**给值：本机此刻前台是最大化窗口 -> `false`（预期）。真全屏（播放器 / 全屏游戏）下为 `true`；节流 ~2s、探测失败一律降级 `false`。
+- A1 初见流程的交互手感（探出 + 张望 + 问名字）需站长实机过一遍；自证门只覆盖「迁移 + onboarded 字段」这类纯逻辑。
